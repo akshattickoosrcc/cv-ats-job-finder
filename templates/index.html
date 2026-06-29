@@ -5,34 +5,38 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CV Analyzer &amp; Job Finder</title>
   <style>
-    /* ── Design tokens — Pastel Edition ── */
+    /* ── Design tokens ── */
     :root {
-      --primary:       #7c6ff7;
-      --primary-dark:  #5b4fcf;
-      --primary-light: #ede9ff;
-      --success:       #5db98a;
-      --success-light: #d6f0e4;
-      --warning:       #d4924a;
-      --warning-light: #fdecd5;
-      --danger:        #d05c6c;
-      --danger-light:  #fce8eb;
-      --bg:            #f4f2fb;
+      --primary:       #6c63ff;
+      --primary-dark:  #4f46e5;
+      --primary-light: #eeeeff;
+      --primary-grad:  linear-gradient(135deg, #6c63ff 0%, #a78bfa 100%);
+      --success:       #10b981;
+      --success-light: #d1fae5;
+      --warning:       #f59e0b;
+      --warning-light: #fef3c7;
+      --danger:        #ef4444;
+      --danger-light:  #fee2e2;
+      --bg:            #f5f4ff;
       --surface:       #ffffff;
-      --surface-2:     #faf9fe;
-      --text:          #2d2a45;
-      --muted:         #7a7895;
-      --border:        #e4e1f5;
-      --shadow:        0 1px 4px rgba(100,90,160,.07), 0 4px 16px rgba(100,90,160,.06);
-      --shadow-lg:     0 8px 32px rgba(100,90,160,.13);
-      --radius:        16px;
+      --surface-2:     #fafafe;
+      --text:          #1e1b4b;
+      --muted:         #6b7280;
+      --border:        #e5e7eb;
+      --shadow:        0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(108,99,255,.07);
+      --shadow-md:     0 4px 12px rgba(0,0,0,.08), 0 8px 24px rgba(108,99,255,.09);
+      --shadow-lg:     0 8px 32px rgba(108,99,255,.15);
+      --radius:        18px;
       --radius-sm:     10px;
+      --radius-xs:     7px;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
+      background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(108,99,255,.12), transparent);
       color: var(--text);
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
@@ -40,39 +44,48 @@
 
     /* ── Header ── */
     header {
-      background: #fff;
+      background: rgba(255,255,255,.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
-      padding: 1.5rem 2rem;
+      padding: 1rem 2rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
     .header-logo {
       display: inline-flex;
       align-items: center;
-      gap: .65rem;
-      font-size: 1.25rem;
+      gap: .6rem;
+      font-size: 1.1rem;
       font-weight: 800;
       letter-spacing: -.03em;
       color: var(--text);
+      white-space: nowrap;
     }
     .header-logo-dot {
-      width: 32px; height: 32px;
-      border-radius: 9px;
-      background: var(--primary-light);
+      width: 34px; height: 34px;
+      border-radius: 10px;
+      background: var(--primary-grad);
       display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 3px 10px rgba(108,99,255,.35);
     }
-    .header-logo-dot svg { color: var(--primary); width: 18px; height: 18px; }
+    .header-logo-dot svg { color: #fff; width: 18px; height: 18px; }
     .header-tagline {
-      font-size: .82rem;
+      font-size: .78rem;
       color: var(--muted);
       font-weight: 400;
+      white-space: nowrap;
     }
     .header-right { display: flex; align-items: center; gap: .75rem; }
 
     /* ── Main wrapper ── */
-    main { max-width: 960px; margin: 2rem auto 5rem; padding: 0 1.25rem; }
+    main { max-width: 980px; margin: 2.5rem auto 6rem; padding: 0 1.5rem; }
 
     /* ── Steps ── */
     .step { display: none; }
@@ -88,26 +101,55 @@
 
     /* ─────── STEP 1 — Upload ─────── */
     .upload-wrap {
-      max-width: 540px;
+      max-width: 560px;
       margin: 0 auto;
-      padding-top: .5rem;
+      padding-top: 1rem;
     }
-    .upload-heading { font-size: 1.5rem; font-weight: 800; color: var(--text); margin-bottom: .35rem; letter-spacing: -.02em; }
-    .upload-sub { color: var(--muted); font-size: .9rem; margin-bottom: 1.75rem; }
+    .upload-heading {
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: .5rem;
+      letter-spacing: -.04em;
+      line-height: 1.2;
+    }
+    .upload-heading span {
+      background: var(--primary-grad);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .upload-sub { color: var(--muted); font-size: .92rem; margin-bottom: 2rem; line-height: 1.6; }
+
+    .upload-features {
+      display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 2rem;
+    }
+    .upload-feature-pill {
+      display: inline-flex; align-items: center; gap: .4rem;
+      padding: .35rem .85rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: .78rem; font-weight: 600; color: var(--muted);
+      box-shadow: var(--shadow);
+    }
+    .upload-feature-pill svg { width: 13px; height: 13px; color: var(--primary); flex-shrink: 0; }
 
     .drop-zone {
       position: relative;
-      border: 2px dashed var(--border);
+      border: 2px dashed #c7c4e8;
       border-radius: var(--radius);
       padding: 3rem 2rem;
       cursor: pointer;
-      background: var(--surface-2);
-      transition: border-color .2s, background .2s;
+      background: var(--surface);
+      transition: border-color .2s, background .2s, box-shadow .2s;
       text-align: center;
+      box-shadow: var(--shadow);
     }
     .drop-zone:hover, .drop-zone.dragging {
       border-color: var(--primary);
-      background: var(--primary-light);
+      background: #f5f3ff;
+      box-shadow: 0 0 0 4px rgba(108,99,255,.08), var(--shadow-md);
     }
     .drop-zone input[type="file"] {
       position: absolute; inset: 0;
@@ -115,14 +157,15 @@
       opacity: 0; cursor: pointer;
     }
     .dz-icon-wrap {
-      width: 56px; height: 56px;
-      border-radius: 14px;
-      background: var(--primary-light);
+      width: 64px; height: 64px;
+      border-radius: 16px;
+      background: var(--primary-grad);
+      box-shadow: 0 6px 18px rgba(108,99,255,.3);
       display: flex; align-items: center; justify-content: center;
       margin: 0 auto 1rem;
     }
-    .dz-icon { width: 28px; height: 28px; color: var(--primary); }
-    .drop-zone h3 { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+    .dz-icon { width: 30px; height: 30px; color: #fff; }
+    .drop-zone h3 { font-size: 1.1rem; font-weight: 700; color: var(--text); margin-top: .25rem; }
     .drop-zone p  { color: var(--muted); margin-top: .35rem; font-size: .85rem; }
 
     .file-pill {
@@ -144,34 +187,35 @@
       display: inline-flex;
       align-items: center;
       gap: .45rem;
-      padding: .75rem 1.75rem;
+      padding: .8rem 1.9rem;
       border: none;
       border-radius: var(--radius-sm);
       font-size: .95rem;
       font-weight: 700;
       cursor: pointer;
-      transition: background .15s, transform .12s, box-shadow .15s;
+      transition: all .18s ease;
       text-decoration: none;
       line-height: 1;
       letter-spacing: -.01em;
     }
-    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important; }
     .btn-primary {
-      background: var(--primary);
+      background: var(--primary-grad);
       color: #fff;
-      box-shadow: 0 3px 12px rgba(124,111,247,.3);
+      box-shadow: 0 4px 14px rgba(108,99,255,.35);
     }
     .btn-primary:hover:not(:disabled) {
-      background: var(--primary-dark);
-      transform: translateY(-1px);
-      box-shadow: 0 5px 18px rgba(124,111,247,.4);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(108,99,255,.45);
     }
+    .btn-primary:active:not(:disabled) { transform: translateY(0); }
     .btn-ghost { background: transparent; color: var(--muted); border: 1.5px solid var(--border); }
     .btn-ghost:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
     .btn-white { background: #fff; color: var(--primary-dark); font-weight: 700; }
     .btn-white:hover:not(:disabled) { background: var(--primary-light); }
 
-    .upload-actions { margin-top: 1.5rem; display: flex; justify-content: center; gap: 1rem; }
+    .upload-actions { margin-top: 1.75rem; display: flex; justify-content: center; gap: 1rem; }
+    .upload-actions .btn { min-width: 180px; justify-content: center; padding: .9rem 2rem; font-size: 1rem; }
 
     /* Spinner */
     .spin-wrap { display: none; padding: 1.5rem; text-align: center; }
@@ -250,6 +294,13 @@
     @media (max-width: 600px) {
       .analysis-grid { grid-template-columns: 1fr; }
       .results-top   { flex-direction: column; }
+      header { padding: .75rem 1rem; }
+      .header-tagline { display: none; }
+      main { margin: 1.5rem auto 4rem; padding: 0 1rem; }
+      .upload-heading { font-size: 1.6rem; }
+      .upload-features { gap: .4rem; }
+      .search-banner { padding: 1.25rem; }
+      .jobs-grid { grid-template-columns: 1fr !important; }
     }
     .col-full { grid-column: 1 / -1; }
 
@@ -287,16 +338,16 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 1.5rem 1.75rem;
+      box-shadow: var(--shadow-md);
+      padding: 1.75rem 2rem;
       margin-bottom: 1.5rem;
     }
-    .search-banner h2 { font-size: 1.15rem; font-weight: 800; margin-bottom: .2rem; color: var(--text); letter-spacing: -.02em; }
-    .search-banner p  { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; }
+    .search-banner h2 { font-size: 1.2rem; font-weight: 800; margin-bottom: .25rem; color: var(--text); letter-spacing: -.03em; }
+    .search-banner p  { color: var(--muted); font-size: .85rem; margin-bottom: 1.25rem; }
     .search-row { display: flex; gap: .65rem; }
     .search-input {
       flex: 1;
-      padding: .72rem 1rem;
+      padding: .8rem 1.1rem;
       border: 1.5px solid var(--border);
       border-radius: var(--radius-sm);
       font-size: .93rem;
@@ -305,7 +356,7 @@
       color: var(--text);
       transition: border-color .15s, box-shadow .15s;
     }
-    .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(124,111,247,.12); background: #fff; }
+    .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(108,99,255,.12); background: #fff; }
     @media (max-width: 480px) { .search-row { flex-direction: column; } }
 
     /* ─────── Job Results ─────── */
@@ -340,21 +391,30 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      padding: 1.25rem;
-      display: flex; flex-direction: column; gap: .45rem;
-      transition: transform .18s, box-shadow .18s, border-color .18s;
+      padding: 1.4rem;
+      display: flex; flex-direction: column; gap: .5rem;
+      transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
       position: relative;
+      overflow: hidden;
     }
-    .job-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: #ccc8f0; }
-    .job-card.best-match { border-color: #a8d8c2; box-shadow: 0 0 0 2px var(--success-light), var(--shadow); }
+    .job-card:hover {
+      transform: translateY(-3px);
+      box-shadow: var(--shadow-lg);
+      border-color: rgba(108,99,255,.3);
+    }
+    .job-card.best-match {
+      border-color: rgba(16,185,129,.4);
+      box-shadow: 0 0 0 2px rgba(16,185,129,.12), var(--shadow-md);
+    }
 
     .best-match-ribbon {
-      position: absolute; top: -1px; right: -1px;
-      background: var(--success); color: #fff;
+      position: absolute; top: 0; right: 0;
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
       font-size: .6rem; font-weight: 800;
-      padding: .2rem .6rem;
+      padding: .25rem .75rem;
       border-radius: 0 var(--radius) 0 var(--radius-sm);
-      text-transform: uppercase; letter-spacing: .07em;
+      text-transform: uppercase; letter-spacing: .08em;
     }
 
     .jc-match-row { display: flex; align-items: center; gap: .5rem; margin-top: .1rem; }
@@ -573,12 +633,13 @@
 
     .jc-footer { margin-top: auto; padding-top: .75rem; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
     .apply-btn {
-      flex: 1; text-align: center; padding: .55rem;
-      background: var(--primary); color: #fff; border-radius: var(--radius-sm);
+      flex: 1; text-align: center; padding: .6rem;
+      background: var(--primary-grad); color: #fff; border-radius: var(--radius-sm);
       font-size: .84rem; font-weight: 700; text-decoration: none;
-      transition: background .15s, transform .12s;
+      transition: all .18s ease;
+      box-shadow: 0 2px 8px rgba(108,99,255,.25);
     }
-    .apply-btn:hover { background: var(--primary-dark); transform: translateY(-1px); }
+    .apply-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(108,99,255,.4); }
     .save-btn {
       padding: .45rem .9rem; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
       background: var(--surface); color: var(--muted); font-size: .8rem; font-weight: 600;
@@ -638,8 +699,27 @@
   <!-- ═══════════ STEP 1 — Upload ═══════════ -->
   <div id="step-upload" class="step active fade-in">
     <div class="upload-wrap">
-      <h1 class="upload-heading">Analyze your CV</h1>
-      <p class="upload-sub">Get an ATS score, domain intelligence, and matched job listings — all in one place.</p>
+      <h1 class="upload-heading">Your CV,<br><span>objectively scored</span></h1>
+      <p class="upload-sub">Upload your CV and get an instant ATS score, domain intelligence, and matched job listings tailored to your profile.</p>
+
+      <div class="upload-features">
+        <span class="upload-feature-pill">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          ATS Score
+        </span>
+        <span class="upload-feature-pill">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          Domain Intelligence
+        </span>
+        <span class="upload-feature-pill">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          Matched Jobs
+        </span>
+        <span class="upload-feature-pill">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          JD Match Check
+        </span>
+      </div>
 
       <div class="drop-zone" id="drop-zone">
         <input type="file" id="cv-file" accept=".pdf" />
