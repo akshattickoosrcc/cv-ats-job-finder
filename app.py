@@ -13,6 +13,9 @@ import scrapers
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.secret_key = os.environ.get("SECRET_KEY", "cvfinder-dev-key-change-in-prod")
+
+_cv_store: dict = {}  # simple in-process store for current CV text
 
 # ─────────────────────── ATS keyword data ────────────────────────
 
@@ -95,87 +98,172 @@ def parse_cv_text(file_stream):
 # ─────────────────────── ATS analysis ────────────────────────────
 
 def analyze_ats(text):
-    score = 0
+    t = text.lower()
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
     issues = []
     suggestions = []
     missing_keywords = []
-    t = text.lower()
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    sections: dict[str, dict] = {}
 
+    # ── Section 1: Contact (15 pts) ──────────────────────────────
+    c_score = 0
     has_email    = bool(re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text))
     has_phone    = bool(re.search(r"(\+?\d[\d\s\-(). ]{7,}\d)", text))
     has_linkedin = "linkedin" in t
-    has_github   = "github" in t
+    has_github   = "github" in t or "portfolio" in t
 
-    if has_email:    score += 6
-    else:            issues.append("No email address detected"); suggestions.append("Add a professional email address at the top of your CV")
-    if has_phone:    score += 5
-    else:            issues.append("No phone number found"); suggestions.append("Include a phone number with country code")
-    if has_linkedin: score += 2
-    else:            suggestions.append("Add your LinkedIn profile URL to boost visibility")
-    if has_github:   score += 2
-    else:            suggestions.append("Include a GitHub or portfolio link if applicable")
+    if has_email:    c_score += 6
+    else:            issues.append("No email address detected"); suggestions.append("Add a professional email address at the top")
+    if has_phone:    c_score += 5
+    else:            issues.append("No phone number found"); suggestions.append("Include a phone number with country code (+91 for India)")
+    if has_linkedin: c_score += 2
+    else:            suggestions.append("Add your LinkedIn profile URL — recruiters always check")
+    if has_github:   c_score += 2
+    else:            suggestions.append("Add a GitHub/portfolio link to show your work")
+    sections["contact"] = {"label": "Contact Info", "score": c_score, "max": 15}
 
-    weights = {"experience": 8, "education": 6, "skills": 6, "summary": 3, "projects": 2}
+    # ── Section 2: Structure (25 pts) ────────────────────────────
+    s_score = 0
+    weights = {"experience": 9, "education": 6, "skills": 6, "summary": 2, "projects": 2}
     for section, pts in weights.items():
         if any(kw in t for kw in SECTION_PATTERNS[section]):
-            score += pts
+            s_score += pts
         else:
             issues.append(f"'{section.capitalize()}' section not clearly labeled")
-            suggestions.append(f"Add a clear '{section.capitalize()}' header — ATS systems scan for these keywords")
+            suggestions.append(f"Add a clear '{section.capitalize()}' heading — ATS parsers need it")
+    sections["structure"] = {"label": "Structure", "score": s_score, "max": 25}
 
+    # ── Section 3: Content quality (30 pts) ──────────────────────
+    q_score = 0
     found_verbs   = [v for v in ACTION_VERBS if v in t]
-    score        += min(15, len(found_verbs) * 2)
+    q_score      += min(15, len(found_verbs) * 2)
     missing_verbs = [v for v in ACTION_VERBS if v not in t]
     if len(found_verbs) < 5:
         missing_keywords.extend(missing_verbs[:6])
-        suggestions.append(f"Add more action verbs: {', '.join(missing_verbs[:4])}")
+        suggestions.append(f"Use stronger action verbs: {', '.join(missing_verbs[:5])}")
     elif len(found_verbs) < 8:
-        suggestions.append(f"Strengthen bullet points with verbs like: {', '.join(missing_verbs[:3])}")
+        suggestions.append(f"More impact verbs would help: {', '.join(missing_verbs[:3])}")
 
     qty_patterns = [
-        r"\d+\s*%", r"\$\s*[\d,]+", r"\b\d+\s*(million|thousand|k|m)\b",
-        r"\b\d{2,}\s*(users|customers|clients|projects|employees|members|students)\b",
-        r"(increased|decreased|reduced|improved|grew|saved|generated)\s+\w*\s*\d+",
+        r"\d+\s*%", r"[₹$€]\s*[\d,]+", r"\b\d+\s*(million|thousand|crore|lakh|k|m)\b",
+        r"\b\d{2,}\s*(users|customers|clients|projects|employees|members|students|leads)\b",
+        r"(increased|decreased|reduced|improved|grew|saved|generated|drove)\s+\w*\s*\d+",
     ]
     qty = sum(1 for p in qty_patterns if re.search(p, t))
-    score += min(15, qty * 5)
+    q_score += min(15, qty * 5)
     if qty == 0:
         issues.append("No quantifiable achievements found")
-        suggestions.append("Quantify your impact: 'Increased sales by 35%', 'Led a team of 8'")
+        suggestions.append("Add numbers: 'Increased revenue 30%', 'Managed team of 8', 'Served 500+ customers'")
     elif qty < 3:
-        suggestions.append("Add more measurable outcomes — aim for 4–6 quantified achievements")
+        suggestions.append("Add more metrics — aim for 4–6 quantified achievements across your experience")
+    sections["content"] = {"label": "Content Quality", "score": q_score, "max": 30}
 
+    # ── Section 4: Formatting (20 pts) ───────────────────────────
+    f_score = 0
     words = len(text.split())
-    if   300 <= words <= 800:   score += 10
-    elif 800 < words <= 1200:   score += 6;  suggestions.append(f"CV is {words} words — consider trimming to 1–2 pages")
-    elif words < 300:           score += 3;  issues.append(f"CV is very short ({words} words)"); suggestions.append("Expand your experience and skills sections")
-    else:                       score += 2;  issues.append(f"CV is quite long ({words} words)"); suggestions.append("Trim to 1–2 pages for best ATS performance")
+    if   300 <= words <= 800:   f_score += 10
+    elif 800 < words <= 1200:   f_score += 6;  suggestions.append(f"CV is {words} words — trim to 1–2 pages for best results")
+    elif words < 300:           f_score += 3;  issues.append(f"CV is very short ({words} words)"); suggestions.append("Expand experience and skills sections")
+    else:                       f_score += 2;  issues.append(f"CV is too long ({words} words)"); suggestions.append("Trim to 1–2 pages — ATS and recruiters prefer concise CVs")
 
     has_bullets = any(re.match(r"^[•\-\*·▪▸►]", l) for l in lines)
-    has_dates   = bool(re.search(
-        r"\b(19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4}", t))
-    if has_bullets: score += 5
-    else:           issues.append("No bullet points detected"); suggestions.append("Use bullet points for responsibilities and achievements")
-    if has_dates:   score += 5
-    else:           issues.append("Employment/education dates not found"); suggestions.append("Add month–year dates to each role and education entry")
+    has_dates   = bool(re.search(r"\b(19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4}", t))
+    if has_bullets: f_score += 5
+    else:           issues.append("No bullet points detected"); suggestions.append("Use bullet points — ATS parsers and recruiters expect them")
+    if has_dates:   f_score += 5
+    else:           issues.append("Employment/education dates missing"); suggestions.append("Add month–year dates (e.g. 'Jun 2022 – Present') to every role")
 
     non_ascii = len(re.findall(r"[^\x00-\x7F]", text))
     if non_ascii > 30:
-        score -= 3
-        issues.append(f"{non_ascii} non-ASCII characters — may confuse ATS parsers")
-        suggestions.append("Use plain ASCII; avoid fancy bullets or emoji")
-    if re.search(r"(\|[^\|]+\|)", text):
-        score -= 2
-        issues.append("Table formatting detected — ATS systems often misread tables")
+        f_score = max(0, f_score - 3)
+        issues.append(f"{non_ascii} non-ASCII characters detected — may corrupt ATS parsing")
+        suggestions.append("Remove special characters, fancy bullets, or symbols")
+    if re.search(r"(\|[^\|]+\|){2,}", text):
+        f_score = max(0, f_score - 2)
+        issues.append("Table formatting detected — ATS systems misread tables")
         suggestions.append("Replace tables with plain bullet lists")
+    sections["formatting"] = {"label": "Formatting", "score": f_score, "max": 20}
 
+    # ── Section 5: Keyword density (10 pts) ──────────────────────
+    found_skills = [s for s in TECH_SKILLS if re.search(r"\b" + re.escape(s) + r"\b", t)]
+    k_score = min(10, len(found_skills))
+    if len(found_skills) < 5:
+        issues.append("Few technical/domain keywords found")
+        suggestions.append("Add a dedicated Skills section listing your tools, languages, and platforms")
+    sections["keywords"] = {"label": "Keywords", "score": k_score, "max": 10}
+
+    total = sum(s["score"] for s in sections.values())
     return {
-        "score": max(0, min(100, score)),
+        "score": max(0, min(100, total)),
         "word_count": words,
         "missing_keywords": list(set(missing_keywords))[:10],
         "issues": issues,
         "suggestions": suggestions,
+        "sections": sections,
+    }
+
+
+# ─────────────────────── JD Matcher ──────────────────────────────
+
+def match_jd(cv_text: str, jd_text: str, cv_keywords: list[str]) -> dict:
+    """
+    Compares CV against a job description.
+    Returns match_score, matched, missing, tailored_suggestions, jd_keywords.
+    """
+    jd_t   = jd_text.lower()
+    cv_t   = cv_text.lower()
+
+    # Extract all meaningful terms from JD
+    jd_keywords: set[str] = set()
+    for skill in TECH_SKILLS:
+        if re.search(r"\b" + re.escape(skill) + r"\b", jd_t):
+            jd_keywords.add(skill)
+
+    # Also pull domain signals from JD
+    for domain, signals in DOMAIN_SIGNALS.items():
+        for kw in signals:
+            if re.search(r"\b" + re.escape(kw) + r"\b", jd_t) and len(kw) > 3:
+                jd_keywords.add(kw)
+
+    # Extract requirements phrases ("X+ years", "must have", "required", "proficient in")
+    req_phrases = re.findall(
+        r"(?:proficient|experience|expertise|knowledge|skilled)\s+(?:in|with)\s+([a-zA-Z0-9\s\+#\.]+?)(?:[,\.\n]|$)",
+        jd_t
+    )
+    for phrase in req_phrases:
+        tokens = [t.strip() for t in re.split(r"\s+and\s+|\s*/\s*|,", phrase) if 2 < len(t.strip()) < 35]
+        jd_keywords.update(tokens[:5])
+
+    if not jd_keywords:
+        return {"error": "Could not extract keywords from job description — try pasting more text"}
+
+    cv_kw_set = set(cv_keywords)
+    matched   = sorted(jd_keywords & cv_kw_set)
+    missing   = sorted(jd_keywords - cv_kw_set)
+
+    match_pct = round(len(matched) / len(jd_keywords) * 100) if jd_keywords else 0
+
+    # Tailored suggestions
+    tips = []
+    if missing:
+        critical = missing[:5]
+        tips.append(f"Add these missing keywords to your CV: {', '.join(critical)}")
+    if match_pct < 50:
+        tips.append("Your CV matches less than half the JD keywords — consider tailoring the skills section directly")
+    if match_pct >= 70:
+        tips.append("Strong match — make sure these keywords also appear in your job titles and bullet points, not just the skills list")
+
+    # Check for years-of-experience requirement
+    yrs_req = re.findall(r"(\d+)\+?\s*(?:to\s*\d+)?\s*years?\s*(?:of\s*)?(?:experience|exp)", jd_t)
+    if yrs_req:
+        tips.append(f"JD requires {yrs_req[0]}+ years experience — make sure your experience duration is clearly stated")
+
+    return {
+        "match_pct": match_pct,
+        "matched":   matched[:20],
+        "missing":   missing[:20],
+        "jd_total":  len(jd_keywords),
+        "tips":      tips,
     }
 
 
@@ -201,6 +289,406 @@ def extract_cv_keywords(text):
                 if item not in {"and", "or", "the", "in", "of", "for", "to", "with", "a", "an", "etc"}:
                     found.add(item)
     return sorted(found)[:50]
+
+
+# ─────────────────────── CV Intelligence Engine ──────────────────
+
+# 14 domains, each with weighted keywords (higher weight = stronger signal)
+DOMAIN_SIGNALS: dict[str, dict[str, float]] = {
+    "software_engineering": {
+        "python": 2, "java": 2, "javascript": 2, "typescript": 2, "c++": 2, "golang": 2,
+        "rust": 2, "scala": 2, "c#": 2, "php": 1.5, "ruby": 1.5, "react": 2, "angular": 2,
+        "vue": 2, "nodejs": 2, "django": 2, "flask": 2, "spring": 2, "fastapi": 2,
+        "graphql": 1.5, "rest api": 1.5, "microservices": 2, "oop": 1.5, "tdd": 1.5,
+        "git": 1, "agile": 1, "scrum": 1, "software engineer": 3, "software developer": 3,
+        "backend": 2, "frontend": 2, "full stack": 2, "web developer": 2,
+    },
+    "data_science_ml": {
+        "machine learning": 3, "deep learning": 3, "nlp": 3, "computer vision": 3,
+        "pytorch": 3, "tensorflow": 3, "keras": 2, "scikit-learn": 2, "pandas": 2,
+        "numpy": 2, "statistics": 2, "neural network": 3, "transformer": 3, "llm": 3,
+        "artificial intelligence": 2, "mlops": 2, "model training": 2, "feature engineering": 2,
+        "data scientist": 3, "ml engineer": 3, "ai engineer": 2, "research": 1,
+        "hypothesis": 1, "a/b testing": 1.5, "regression": 1.5, "classification": 1.5,
+    },
+    "data_engineering": {
+        "spark": 3, "kafka": 3, "airflow": 3, "dbt": 2, "hadoop": 2, "hive": 2,
+        "snowflake": 2, "bigquery": 2, "redshift": 2, "databricks": 2, "pyspark": 3,
+        "etl": 3, "pipeline": 2, "data warehouse": 2, "data lake": 2, "data engineer": 3,
+        "sql": 1.5, "postgresql": 1.5, "cassandra": 1.5, "elasticsearch": 1.5,
+    },
+    "data_analytics": {
+        "sql": 2, "excel": 2, "tableau": 3, "power bi": 3, "google analytics": 2,
+        "data analysis": 3, "business intelligence": 2, "reporting": 2, "dashboards": 2,
+        "looker": 2, "metabase": 2, "data visualization": 2, "analytics": 2,
+        "data analyst": 3, "business analyst": 2, "insights": 1, "kpi": 1.5,
+    },
+    "devops_cloud": {
+        "aws": 2, "azure": 2, "gcp": 2, "terraform": 3, "ansible": 2, "jenkins": 2,
+        "ci/cd": 3, "github actions": 2, "kubernetes": 3, "docker": 2, "cloud": 2,
+        "devops": 3, "sre": 3, "infrastructure": 2, "monitoring": 1.5, "linux": 1.5,
+        "bash": 1.5, "devops engineer": 3, "cloud engineer": 3, "cloudformation": 2,
+    },
+    "product_management": {
+        "product": 2, "roadmap": 3, "user stories": 2, "agile": 1.5, "scrum": 1.5,
+        "product manager": 3, "product management": 3, "prd": 2, "feature": 1,
+        "stakeholder": 2, "prioritization": 2, "okr": 2, "go-to-market": 2,
+        "product strategy": 2, "product owner": 2, "wireframe": 1.5, "user research": 1.5,
+    },
+    "design_ux": {
+        "figma": 3, "sketch": 3, "adobe xd": 3, "prototyping": 2, "wireframing": 2,
+        "ui": 2, "ux": 2, "user research": 2, "user experience": 3, "interaction design": 3,
+        "visual design": 2, "design system": 2, "typography": 1.5, "adobe": 1.5,
+        "illustrator": 2, "photoshop": 1.5, "ui/ux": 3, "graphic designer": 2,
+    },
+    "sales_bd": {
+        "sales": 3, "business development": 3, "lead generation": 3, "cold calling": 2,
+        "crm": 2, "b2b": 2, "b2c": 1.5, "pipeline": 2, "revenue": 2, "quota": 2,
+        "account management": 2, "client acquisition": 2, "prospecting": 2,
+        "negotiation": 2, "salesforce": 2, "hubspot": 2, "bdm": 2,
+        "sales executive": 3, "business development executive": 3,
+    },
+    "marketing": {
+        "marketing": 3, "seo": 3, "sem": 3, "content": 1.5, "social media": 2,
+        "email marketing": 2, "campaigns": 2, "google ads": 2, "facebook ads": 2,
+        "brand": 1.5, "digital marketing": 3, "growth": 1.5, "acquisition": 1.5,
+        "retention": 1.5, "copywriting": 2, "influencer": 1.5, "performance marketing": 3,
+        "marketing manager": 3, "content writer": 2, "seo specialist": 3,
+    },
+    "finance": {
+        "finance": 2, "accounting": 2, "financial modeling": 3, "excel": 1.5,
+        "p&l": 2, "balance sheet": 2, "forecasting": 2, "budgeting": 2,
+        "valuation": 2, "investment": 1.5, "private equity": 2, "venture capital": 2,
+        "cfa": 3, "ca": 2, "chartered accountant": 3, "audit": 2, "tax": 1.5,
+        "financial analysis": 3, "accountant": 3, "financial analyst": 3,
+        "tally": 2, "gst": 1.5, "mba finance": 2,
+    },
+    "operations": {
+        "operations": 2, "supply chain": 3, "logistics": 3, "process improvement": 2,
+        "lean": 2, "six sigma": 2, "project management": 2, "vendor management": 2,
+        "procurement": 2, "inventory": 1.5, "warehouse": 1.5, "scm": 2,
+        "operations manager": 3, "project manager": 2, "pmp": 2,
+    },
+    "hr": {
+        "hr": 2, "human resources": 3, "recruitment": 3, "talent acquisition": 3,
+        "onboarding": 2, "employee engagement": 2, "hris": 2, "performance management": 2,
+        "learning & development": 2, "compensation": 1.5, "payroll": 1.5,
+        "people operations": 2, "hr manager": 3, "recruiter": 3,
+    },
+    "consulting": {
+        "consulting": 3, "strategy": 2, "management consulting": 3, "problem solving": 1.5,
+        "presentation": 1.5, "powerpoint": 1.5, "case study": 2, "client management": 2,
+        "advisory": 2, "mckinsey": 3, "bcg": 3, "bain": 3, "deloitte": 2,
+        "business consulting": 3, "strategy consultant": 3,
+    },
+    "mobile": {
+        "android": 3, "ios": 3, "flutter": 3, "react native": 3, "kotlin": 2,
+        "swift": 2, "mobile": 2, "app development": 2, "mobile developer": 3,
+        "android developer": 3, "ios developer": 3,
+    },
+}
+
+DOMAIN_DISPLAY = {
+    "software_engineering": ("Software Engineering", "💻"),
+    "data_science_ml":      ("Data Science / AI-ML", "🤖"),
+    "data_engineering":     ("Data Engineering",      "🔧"),
+    "data_analytics":       ("Data Analytics",        "📊"),
+    "devops_cloud":         ("DevOps / Cloud",        "☁️"),
+    "product_management":   ("Product Management",    "📱"),
+    "design_ux":            ("Design / UX",           "🎨"),
+    "sales_bd":             ("Sales / Business Dev",  "💼"),
+    "marketing":            ("Marketing / Growth",    "📣"),
+    "finance":              ("Finance / Accounting",  "💰"),
+    "operations":           ("Operations / SCM",      "⚙️"),
+    "hr":                   ("HR / People Ops",       "👥"),
+    "consulting":           ("Consulting / Strategy", "🎯"),
+    "mobile":               ("Mobile Development",    "📲"),
+}
+
+# job titles per domain × experience level
+# Fresher = 0-1yr (internship only), Junior = 1-3yr, Mid = 3-6yr, Senior = 6-10yr, Lead = 10+yr
+DOMAIN_ROLES: dict[str, dict[str, list[str]]] = {
+    "software_engineering": {
+        "fresher": ["associate software engineer", "junior software developer", "software engineer trainee", "sde intern"],
+        "junior":  ["software engineer", "software developer", "associate engineer"],
+        "mid":     ["senior software engineer", "software engineer ii", "tech lead"],
+        "senior":  ["staff engineer", "principal engineer", "technical lead"],
+        "lead":    ["engineering manager", "vp engineering", "director of engineering"],
+    },
+    "data_science_ml": {
+        "fresher": ["data science associate", "junior data scientist", "ml intern", "ai associate"],
+        "junior":  ["data scientist", "junior ml engineer", "research analyst"],
+        "mid":     ["senior data scientist", "ml engineer", "applied scientist"],
+        "senior":  ["principal data scientist", "senior ml engineer", "head of data science"],
+        "lead":    ["vp data science", "chief data scientist", "director of ai"],
+    },
+    "data_engineering": {
+        "fresher": ["data engineer trainee", "junior data engineer", "analytics engineer associate"],
+        "junior":  ["data engineer", "junior data engineer", "analytics engineer"],
+        "mid":     ["senior data engineer", "data platform engineer"],
+        "senior":  ["staff data engineer", "principal data engineer", "data architect"],
+        "lead":    ["head of data engineering", "director of data"],
+    },
+    "data_analytics": {
+        "fresher": ["data analyst trainee", "junior data analyst", "business analyst fresher", "reporting associate"],
+        "junior":  ["data analyst", "business analyst", "operations analyst"],
+        "mid":     ["senior data analyst", "senior business analyst", "analytics manager"],
+        "senior":  ["principal analyst", "director of analytics"],
+        "lead":    ["head of analytics", "vp analytics"],
+    },
+    "devops_cloud": {
+        "fresher": ["junior devops engineer", "cloud support associate", "devops trainee"],
+        "junior":  ["devops engineer", "cloud engineer", "site reliability engineer"],
+        "mid":     ["senior devops engineer", "senior sre", "platform engineer"],
+        "senior":  ["staff devops engineer", "devops architect"],
+        "lead":    ["head of infrastructure", "vp devops"],
+    },
+    "product_management": {
+        "fresher": ["associate product manager", "product analyst", "junior product manager"],
+        "junior":  ["product manager", "product analyst"],
+        "mid":     ["senior product manager", "group product manager"],
+        "senior":  ["principal product manager", "director of product"],
+        "lead":    ["vp product", "chief product officer", "head of product"],
+    },
+    "design_ux": {
+        "fresher": ["junior ui designer", "ux associate", "design intern", "visual designer trainee"],
+        "junior":  ["ui/ux designer", "product designer", "graphic designer"],
+        "mid":     ["senior ux designer", "senior product designer", "ui lead"],
+        "senior":  ["principal designer", "design lead"],
+        "lead":    ["head of design", "vp design", "design director"],
+    },
+    "sales_bd": {
+        "fresher": ["business development associate", "sales executive trainee", "inside sales associate", "sales development representative", "bdm fresher"],
+        "junior":  ["business development executive", "sales executive", "account executive"],
+        "mid":     ["senior sales executive", "business development manager", "account manager"],
+        "senior":  ["sales manager", "regional sales manager", "key account manager"],
+        "lead":    ["head of sales", "vp sales", "director of business development"],
+    },
+    "marketing": {
+        "fresher": ["marketing executive trainee", "digital marketing associate", "content associate", "social media executive fresher"],
+        "junior":  ["digital marketing executive", "content writer", "seo executive", "social media manager"],
+        "mid":     ["senior marketing manager", "growth manager", "performance marketing manager"],
+        "senior":  ["marketing director", "head of growth", "vp marketing"],
+        "lead":    ["chief marketing officer", "vp marketing", "head of brand"],
+    },
+    "finance": {
+        "fresher": ["accounts executive trainee", "finance associate fresher", "junior financial analyst", "finance intern"],
+        "junior":  ["financial analyst", "accounts executive", "finance executive"],
+        "mid":     ["senior financial analyst", "finance manager", "fp&a analyst"],
+        "senior":  ["finance director", "senior finance manager", "head of finance"],
+        "lead":    ["cfo", "vp finance", "head of treasury"],
+    },
+    "operations": {
+        "fresher": ["operations associate trainee", "supply chain associate fresher", "junior operations analyst"],
+        "junior":  ["operations analyst", "supply chain executive", "logistics executive"],
+        "mid":     ["operations manager", "project manager", "supply chain manager"],
+        "senior":  ["senior operations manager", "head of operations"],
+        "lead":    ["vp operations", "director of operations", "coo"],
+    },
+    "hr": {
+        "fresher": ["hr associate fresher", "talent acquisition trainee", "hr executive trainee", "recruiter associate"],
+        "junior":  ["hr executive", "talent acquisition executive", "recruiter"],
+        "mid":     ["hr manager", "talent acquisition manager", "people operations manager"],
+        "senior":  ["senior hr manager", "head of people", "director of hr"],
+        "lead":    ["chro", "vp people", "director of talent"],
+    },
+    "consulting": {
+        "fresher": ["business analyst associate", "analyst fresher", "management trainee", "strategy associate"],
+        "junior":  ["business analyst", "analyst", "junior consultant"],
+        "mid":     ["consultant", "senior analyst", "associate consultant"],
+        "senior":  ["senior consultant", "manager", "engagement manager"],
+        "lead":    ["partner", "associate director", "principal consultant"],
+    },
+    "mobile": {
+        "fresher": ["junior android developer", "ios developer trainee", "mobile app developer fresher"],
+        "junior":  ["android developer", "ios developer", "flutter developer"],
+        "mid":     ["senior android developer", "senior mobile engineer"],
+        "senior":  ["staff mobile engineer", "mobile tech lead"],
+        "lead":    ["head of mobile", "mobile engineering manager"],
+    },
+}
+
+
+def detect_experience_level(text: str) -> dict:
+    """
+    Returns {level, years, has_internship_only}.
+    level is one of: fresher | junior | mid | senior | lead
+    """
+    t = text.lower()
+
+    # Explicit years of experience
+    exp_patterns = [
+        r'(\d+)\+?\s*years?\s*of\s*(?:work\s*|total\s*|professional\s*)?experience',
+        r'(\d+)\+?\s*yrs?\s*(?:of\s*)?(?:work\s*|professional\s*)?experience',
+        r'experience\s*(?:of\s*)?(\d+)\+?\s*years?',
+    ]
+    explicit_years = 0
+    for pat in exp_patterns:
+        for m in re.findall(pat, t):
+            explicit_years = max(explicit_years, int(m))
+
+    # Detect if candidate is explicitly a fresher
+    fresher_flags = [
+        "fresher", "fresh graduate", "recent graduate", "0 years", "no prior experience",
+        "entry level", "entry-level", "looking for first job", "first job",
+    ]
+    is_explicit_fresher = any(f in t for f in fresher_flags)
+
+    # Detect internship-only vs full-time work
+    has_internship = bool(re.search(r"\b(intern|internship|trainee|apprentice)\b", t))
+
+    # Check for full-time employment signals (beyond internship)
+    fulltime_signals = [
+        r"\b(full.?time|permanent|confirmed|joined as|currently working|employed at|working at)\b",
+        r"\b(engineer|developer|analyst|manager|executive|consultant|specialist|associate|lead)\s+at\b",
+        r"\b(at|@)\s+[A-Z][A-Za-z]+\s*[\|\n]",  # "at CompanyName" with pipe/newline
+    ]
+    has_fulltime = any(re.search(p, t) for p in fulltime_signals)
+
+    # Estimate years from date ranges in CV if no explicit mention
+    if explicit_years == 0 and not is_explicit_fresher:
+        year_matches = [int(y) for y in re.findall(r"\b(20\d{2})\b", t)
+                        if 2000 <= int(y) <= 2026]
+        if len(year_matches) >= 2:
+            span = max(year_matches) - min(year_matches)
+            # Conservative: halve because many dates are education, not all work
+            explicit_years = min(span // 2, 20)
+
+    # Final classification
+    if is_explicit_fresher or (has_internship and not has_fulltime) or explicit_years <= 1:
+        level = "fresher"
+    elif explicit_years <= 3:
+        level = "junior"
+    elif explicit_years <= 6:
+        level = "mid"
+    elif explicit_years <= 10:
+        level = "senior"
+    else:
+        level = "lead"
+
+    internship_only = has_internship and not has_fulltime
+
+    return {"level": level, "years": explicit_years, "internship_only": internship_only}
+
+
+def detect_domains(text: str, cv_keywords: list[str]) -> list[dict]:
+    """
+    Score the CV against each domain.
+    Returns list of {domain, display, icon, score, pct} sorted by score desc.
+    """
+    t = text.lower()
+    scores: dict[str, float] = {}
+
+    for domain, signals in DOMAIN_SIGNALS.items():
+        s = 0.0
+        for kw, weight in signals.items():
+            if re.search(r"\b" + re.escape(kw) + r"\b", t):
+                s += weight
+        scores[domain] = s
+
+    total = sum(scores.values()) or 1
+    results = []
+    for domain, score in sorted(scores.items(), key=lambda x: -x[1]):
+        if score == 0:
+            continue
+        display, icon = DOMAIN_DISPLAY[domain]
+        results.append({
+            "domain": domain,
+            "display": display,
+            "icon": icon,
+            "score": round(score, 1),
+            "pct": round(score / total * 100),
+        })
+    return results
+
+
+def build_job_suggestions(domains: list[dict], exp: dict, cv_keywords: list[str]) -> list[dict]:
+    """
+    Build 1–3 job suggestions based on dominant domains + experience level.
+    Each: {query, title, reason, domain, domain_display, icon}
+    """
+    level = exp["level"]
+    suggestions = []
+    seen_domains: set[str] = set()
+
+    for d in domains[:4]:  # consider top-4 domains
+        domain = d["domain"]
+        if domain in seen_domains:
+            continue
+        seen_domains.add(domain)
+
+        roles = DOMAIN_ROLES.get(domain, {}).get(level, [])
+        if not roles:
+            continue
+
+        primary_role = roles[0]
+        # Add a skill qualifier if relevant CV keyword exists
+        domain_skills = [kw for kw in DOMAIN_SIGNALS.get(domain, {}) if kw in cv_keywords and len(kw) > 3]
+        qualifier = domain_skills[0] if domain_skills else ""
+
+        query = primary_role
+        if qualifier and qualifier not in primary_role:
+            query = f"{primary_role} {qualifier}"
+
+        pct = d["pct"]
+        display = d["display"]
+        icon = d["icon"]
+
+        reasons = {
+            "fresher": f"Entry-level {display} role matching your fresher profile ({pct}% domain fit)",
+            "junior":  f"{display} role for your 1–3 year profile ({pct}% domain fit)",
+            "mid":     f"Mid-level {display} opportunity for your 3–6 year profile ({pct}% domain fit)",
+            "senior":  f"Senior {display} role for your 6–10 year profile ({pct}% domain fit)",
+            "lead":    f"Leadership-level {display} role for your 10+ year profile ({pct}% domain fit)",
+        }
+
+        suggestions.append({
+            "query": query,
+            "title": primary_role.title(),
+            "reason": reasons.get(level, f"{display} match"),
+            "domain": domain,
+            "domain_display": display,
+            "icon": icon,
+            "pct": pct,
+            "all_roles": [r.title() for r in roles[:4]],
+        })
+
+        if len(suggestions) >= 3:
+            break
+
+    return suggestions
+
+
+def derive_recommended_query(text: str, cv_keywords: list[str]) -> dict:
+    """
+    Orchestrates domain detection + experience detection → smart job recommendations.
+    Returns {query, reason, top_skills, detected_role, experience, domains, suggestions}
+    """
+    exp     = detect_experience_level(text)
+    domains = detect_domains(text, cv_keywords)
+    suggestions = build_job_suggestions(domains, exp, cv_keywords)
+
+    if suggestions:
+        primary = suggestions[0]
+        query   = primary["query"]
+        reason  = primary["reason"]
+        role    = primary["title"]
+    else:
+        query  = "software engineer"
+        reason = "General technology role"
+        role   = "Software Engineer"
+
+    top_skills = [kw for kw in cv_keywords if len(kw) > 3][:5]
+
+    return {
+        "query":        query,
+        "reason":       reason,
+        "top_skills":   top_skills,
+        "detected_role": role,
+        "experience":   exp,
+        "domains":      domains[:6],
+        "suggestions":  suggestions,
+    }
 
 
 def score_job(job, cv_keywords):
@@ -249,6 +737,13 @@ def analyze_cv_route():
             result["has_prev_review"] = True
         else:
             result["has_prev_review"] = False
+
+        # Smart job recommendation
+        result["recommendation"] = derive_recommended_query(text, cv_keywords)
+
+        # Cache CV text for JD matching
+        _cv_store["text"]     = text
+        _cv_store["keywords"] = cv_keywords
 
         # Persist this review as the new baseline
         db.save_ats_review(
@@ -299,6 +794,20 @@ def search_jobs_route():
         "live_scraped": len(live_jobs) > 0,
         "cached":      True,
     })
+
+
+@app.route("/api/match-jd", methods=["POST"])
+def match_jd_route():
+    data    = request.get_json() or {}
+    jd_text = (data.get("jd_text") or "").strip()
+    if not jd_text:
+        return jsonify({"error": "Paste a job description first"}), 400
+    cv_text = _cv_store.get("text", "")
+    cv_kws  = _cv_store.get("keywords", [])
+    if not cv_text:
+        return jsonify({"error": "Upload and analyze your CV first"}), 400
+    result = match_jd(cv_text, jd_text, cv_kws)
+    return jsonify(result)
 
 
 @app.route("/api/scrape-status")

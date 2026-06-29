@@ -40,7 +40,7 @@ def _h(json_req=False):
 
 # ─────────────────────── Greenhouse API ──────────────────────────
 
-def scrape_greenhouse(company: dict) -> list[dict]:
+def scrape_greenhouse(company: dict, india_only: bool = False) -> list[dict]:
     slug = company["slug"]
     name = company["name"]
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
@@ -54,6 +54,8 @@ def scrape_greenhouse(company: dict) -> list[dict]:
         for j in data.get("jobs", []):
             loc_obj = j.get("location") or {}
             loc = loc_obj.get("name") or "Remote/Unspecified"
+            if india_only and not is_india_location(loc):
+                continue
             link = j.get("absolute_url") or ""
             title = j.get("title") or ""
             if not title or not link:
@@ -72,7 +74,7 @@ def scrape_greenhouse(company: dict) -> list[dict]:
 
 # ─────────────────────── Lever API ───────────────────────────────
 
-def scrape_lever(company: dict) -> list[dict]:
+def scrape_lever(company: dict, india_only: bool = False) -> list[dict]:
     slug = company["slug"]
     name = company["name"]
     url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
@@ -87,6 +89,8 @@ def scrape_lever(company: dict) -> list[dict]:
         for j in data:
             cats = j.get("categories") or {}
             loc = cats.get("location") or cats.get("office") or "Remote/Unspecified"
+            if india_only and not is_india_location(loc):
+                continue
             link = j.get("hostedUrl") or ""
             title = j.get("text") or ""
             if not title or not link:
@@ -560,25 +564,69 @@ def run_full_scrape():
     try:
         db.clear_old_jobs(keep_days=2)
 
-        # ── Greenhouse (parallel, 25 workers) ──
+        # ── Greenhouse: India-only pass over ALL companies ──
         gh_jobs: list[dict] = []
         with ThreadPoolExecutor(max_workers=25) as ex:
-            futs = {ex.submit(scrape_greenhouse, c): c for c in GREENHOUSE_COMPANIES}
+            futs = {ex.submit(scrape_greenhouse, c, True): c for c in GREENHOUSE_COMPANIES}
             for fut in as_completed(futs):
                 gh_jobs.extend(fut.result())
         n = db.save_jobs(gh_jobs)
         total_saved += n
-        print(f"[Scraper] Greenhouse: {len(gh_jobs)} fetched, {n} new saved")
+        print(f"[Scraper] Greenhouse India: {len(gh_jobs)} fetched, {n} new saved")
 
-        # ── Lever (parallel, 25 workers) ──
+        # ── Greenhouse: full pass for Indian-HQ companies ──
+        from companies import GREENHOUSE_COMPANIES as GH_ALL
+        indian_gh = [c for c in GH_ALL if any(
+            kw in c["name"].lower() for kw in [
+                "freshworks","chargebee","browserstack","postman","hasura",
+                "razorpay","clevertap","moengage","zoho","paytm","swiggy",
+                "zomato","meesho","zepto","phonepe","flipkart","nykaa",
+                "unacademy","upgrad","lenskart","groww","smallcase","zerodha",
+                "juspay","sarvam","krutrim","sprinklr","innovaccer","fractal",
+                "mu sigma","tiger","sigmoid","whatfix","haptik","yellow",
+                "uniphore","leena","mindtickle","vymo","observe",
+            ]
+        )]
+        gh_indian_co: list[dict] = []
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futs = {ex.submit(scrape_greenhouse, c, False): c for c in indian_gh}
+            for fut in as_completed(futs):
+                gh_indian_co.extend(fut.result())
+        n = db.save_jobs(gh_indian_co)
+        total_saved += n
+        print(f"[Scraper] Indian GH companies (all roles): {len(gh_indian_co)} fetched, {n} new saved")
+
+        # ── Lever: India-only pass over ALL companies ──
         lv_jobs: list[dict] = []
         with ThreadPoolExecutor(max_workers=25) as ex:
-            futs = {ex.submit(scrape_lever, c): c for c in LEVER_COMPANIES}
+            futs = {ex.submit(scrape_lever, c, True): c for c in LEVER_COMPANIES}
             for fut in as_completed(futs):
                 lv_jobs.extend(fut.result())
         n = db.save_jobs(lv_jobs)
         total_saved += n
-        print(f"[Scraper] Lever: {len(lv_jobs)} fetched, {n} new saved")
+        print(f"[Scraper] Lever India: {len(lv_jobs)} fetched, {n} new saved")
+
+        # ── Lever: full pass for Indian-HQ companies ──
+        from companies import LEVER_COMPANIES as LV_ALL
+        indian_lv = [c for c in LV_ALL if any(
+            kw in c["name"].lower() for kw in [
+                "razorpay","cred","zepto","meesho","phonepe","ola","swiggy","zomato",
+                "paytm","flipkart","myntra","udaan","inmobi","sharechat","dream11",
+                "mpl","classplus","emeritus","simplilearn","scaler","cars24","spinny",
+                "urban","apna","hackerearth","hackerrank","geeks","codechef","whatfix",
+                "cashfree","setu","decentro","perfios","signzy","yellow","haptik",
+                "observe","uniphore","fractal","tiger","sigmoid","healthifyme",
+                "clevertap","moengage","webengage","zoho","leena","mindtickle",
+            ]
+        )]
+        lv_indian_co: list[dict] = []
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futs = {ex.submit(scrape_lever, c, False): c for c in indian_lv}
+            for fut in as_completed(futs):
+                lv_indian_co.extend(fut.result())
+        n = db.save_jobs(lv_indian_co)
+        total_saved += n
+        print(f"[Scraper] Indian LV companies (all roles): {len(lv_indian_co)} fetched, {n} new saved")
 
         # ── India job boards (parallel, 8 workers) ──
         def scrape_india_for_term(term):
