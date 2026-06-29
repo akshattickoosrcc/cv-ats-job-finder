@@ -1,25 +1,25 @@
-# Generated for cv-ats-job-finder on Fly.io
 app = "cv-ats-job-finder"
-primary_region = "sin"        # Singapore — closest to India
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"
 
 [env]
-  PORT     = "8080"
-  DATA_DIR = "/data"
+  PORT        = "8080"
+  DATA_DIR    = "/data"
+  WEB_CONCURRENCY = "4"
 
 [http_service]
-  internal_port       = 8080
-  force_https         = true
-  auto_stop_machines  = false   # keep alive for scheduler
-  auto_start_machines = true
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = false
+  auto_start_machines  = true
   min_machines_running = 1
 
   [http_service.concurrency]
     type       = "connections"
-    hard_limit = 50
-    soft_limit = 40
+    hard_limit = 500
+    soft_limit = 400
 
 [[mounts]]
   source      = "cv_data"
