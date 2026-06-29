@@ -4,8 +4,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app -c gunicorn.conf.py
-    plan: starter
-    region: singapore
+    plan: free
     envVars:
       - key: PORT
         value: 10000
