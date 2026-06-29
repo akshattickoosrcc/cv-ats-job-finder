@@ -356,18 +356,20 @@ DOMAIN_SIGNALS: dict[str, dict[str, float]] = {
         "illustrator": 2, "photoshop": 1.5, "ui/ux": 3, "graphic designer": 2,
     },
     "sales_bd": {
-        "sales": 3, "business development": 3, "lead generation": 3, "cold calling": 2,
-        "crm": 2, "b2b": 2, "b2c": 1.5, "pipeline": 2, "revenue": 2, "quota": 2,
-        "account management": 2, "client acquisition": 2, "prospecting": 2,
-        "negotiation": 2, "salesforce": 2, "hubspot": 2, "bdm": 2,
-        "sales executive": 3, "business development executive": 3,
+        "sales": 3, "business development": 3, "lead generation": 3, "cold calling": 3,
+        "crm": 2, "b2b": 2, "b2c": 2, "revenue target": 2, "quota": 3,
+        "account management": 2, "client acquisition": 3, "prospecting": 3,
+        "negotiation": 2, "salesforce": 2, "hubspot": 2, "bdm": 3,
+        "sales executive": 3, "business development executive": 3, "inside sales": 3,
+        "sales funnel": 3, "deal closure": 3,
     },
     "marketing": {
-        "marketing": 3, "seo": 3, "sem": 3, "content": 1.5, "social media": 2,
+        "marketing": 3, "seo": 3, "sem": 3, "social media marketing": 2,
         "email marketing": 2, "campaigns": 2, "google ads": 2, "facebook ads": 2,
-        "brand": 1.5, "digital marketing": 3, "growth": 1.5, "acquisition": 1.5,
-        "retention": 1.5, "copywriting": 2, "influencer": 1.5, "performance marketing": 3,
+        "digital marketing": 3, "performance marketing": 3, "growth hacking": 2,
+        "copywriting": 2, "influencer marketing": 2, "content marketing": 2,
         "marketing manager": 3, "content writer": 2, "seo specialist": 3,
+        "brand marketing": 2, "marketing analytics": 2,
     },
     "finance": {
         "finance": 2, "accounting": 2, "financial modeling": 3, "excel": 1.5,
@@ -390,10 +392,11 @@ DOMAIN_SIGNALS: dict[str, dict[str, float]] = {
         "people operations": 2, "hr manager": 3, "recruiter": 3,
     },
     "consulting": {
-        "consulting": 3, "strategy": 2, "management consulting": 3, "problem solving": 1.5,
-        "presentation": 1.5, "powerpoint": 1.5, "case study": 2, "client management": 2,
-        "advisory": 2, "mckinsey": 3, "bcg": 3, "bain": 3, "deloitte": 2,
-        "business consulting": 3, "strategy consultant": 3,
+        "consulting": 3, "management consulting": 3, "strategy consulting": 3,
+        "case study": 2, "client management": 2, "advisory": 3,
+        "mckinsey": 3, "bcg": 3, "bain": 3, "deloitte": 3, "pwc": 2, "kpmg": 2,
+        "business consulting": 3, "strategy consultant": 3, "consultant": 2,
+        "engagement manager": 2, "due diligence": 2,
     },
     "mobile": {
         "android": 3, "ios": 3, "flutter": 3, "react native": 3, "kotlin": 2,
@@ -589,6 +592,8 @@ def detect_domains(text: str, cv_keywords: list[str]) -> list[dict]:
     """
     Score the CV against each domain.
     Returns list of {domain, display, icon, score, pct} sorted by score desc.
+    Only includes domains with meaningful signal — weak domains are suppressed
+    if a much stronger domain exists (prevents generic keywords from polluting results).
     """
     t = text.lower()
     scores: dict[str, float] = {}
@@ -600,10 +605,16 @@ def detect_domains(text: str, cv_keywords: list[str]) -> list[dict]:
                 s += weight
         scores[domain] = s
 
+    sorted_scores = sorted(scores.items(), key=lambda x: -x[1])
+    top_score = sorted_scores[0][1] if sorted_scores else 1
     total = sum(scores.values()) or 1
+
     results = []
-    for domain, score in sorted(scores.items(), key=lambda x: -x[1]):
-        if score == 0:
+    for domain, score in sorted_scores:
+        if score < 2.0:
+            continue
+        # Suppress weak domains: must be at least 25% of top domain's score
+        if top_score > 0 and score / top_score < 0.25:
             continue
         display, icon = DOMAIN_DISPLAY[domain]
         results.append({
@@ -619,13 +630,14 @@ def detect_domains(text: str, cv_keywords: list[str]) -> list[dict]:
 def build_job_suggestions(domains: list[dict], exp: dict, cv_keywords: list[str]) -> list[dict]:
     """
     Build 1–3 job suggestions based on dominant domains + experience level.
-    Each: {query, title, reason, domain, domain_display, icon}
+    Uses actual CV keywords to build personalised search queries.
     """
     level = exp["level"]
     suggestions = []
     seen_domains: set[str] = set()
+    cv_kw_set = set(cv_keywords)
 
-    for d in domains[:4]:  # consider top-4 domains
+    for d in domains[:4]:
         domain = d["domain"]
         if domain in seen_domains:
             continue
@@ -636,35 +648,42 @@ def build_job_suggestions(domains: list[dict], exp: dict, cv_keywords: list[str]
             continue
 
         primary_role = roles[0]
-        # Add a skill qualifier if relevant CV keyword exists
-        domain_skills = [kw for kw in DOMAIN_SIGNALS.get(domain, {}) if kw in cv_keywords and len(kw) > 3]
+
+        # Pick the most specific skill the user has from this domain
+        # Prefer longer, more specific keywords over single-word ones
+        domain_skills = sorted(
+            [kw for kw in DOMAIN_SIGNALS.get(domain, {}) if kw in cv_kw_set and len(kw) > 4],
+            key=lambda k: (-DOMAIN_SIGNALS[domain].get(k, 0), -len(k))
+        )
         qualifier = domain_skills[0] if domain_skills else ""
 
+        # Build a targeted query: role + most distinctive skill
         query = primary_role
-        if qualifier and qualifier not in primary_role:
+        if qualifier and qualifier.lower() not in primary_role.lower():
             query = f"{primary_role} {qualifier}"
 
-        pct = d["pct"]
+        pct  = d["pct"]
         display = d["display"]
         icon = d["icon"]
 
-        reasons = {
-            "fresher": f"Entry-level {display} role matching your fresher profile ({pct}% domain fit)",
-            "junior":  f"{display} role for your 1–3 year profile ({pct}% domain fit)",
-            "mid":     f"Mid-level {display} opportunity for your 3–6 year profile ({pct}% domain fit)",
-            "senior":  f"Senior {display} role for your 6–10 year profile ({pct}% domain fit)",
-            "lead":    f"Leadership-level {display} role for your 10+ year profile ({pct}% domain fit)",
+        level_labels = {
+            "fresher": f"Entry-level {display} role — {pct}% match to your profile",
+            "junior":  f"{display} role for 1–3 year experience — {pct}% match",
+            "mid":     f"Mid-level {display} — {pct}% match to your profile",
+            "senior":  f"Senior {display} role — {pct}% match to your profile",
+            "lead":    f"Leadership {display} role — {pct}% match to your profile",
         }
 
         suggestions.append({
-            "query": query,
-            "title": primary_role.title(),
-            "reason": reasons.get(level, f"{display} match"),
-            "domain": domain,
+            "query":          query,
+            "title":          primary_role.title(),
+            "reason":         level_labels.get(level, f"{display} match"),
+            "domain":         domain,
             "domain_display": display,
-            "icon": icon,
-            "pct": pct,
-            "all_roles": [r.title() for r in roles[:4]],
+            "icon":           icon,
+            "pct":            pct,
+            "all_roles":      [r.title() for r in roles[:4]],
+            "top_skill":      qualifier,
         })
 
         if len(suggestions) >= 3:
