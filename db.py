@@ -12,10 +12,14 @@ _local = threading.local()
 
 def _conn():
     if not hasattr(_local, "conn") or _local.conn is None:
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-64000")   # 64 MB page cache
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA mmap_size=268435456") # 256 MB mmap
+        conn.execute("PRAGMA busy_timeout=10000")  # wait 10s on lock
         _local.conn = conn
     return _local.conn
 

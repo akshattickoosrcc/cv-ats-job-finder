@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 
 import pdfplumber
 from apscheduler.schedulers.background import BackgroundScheduler
+from cachetools import TTLCache
 from flask import Flask, jsonify, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 import db
 import scrapers
@@ -15,7 +18,18 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 app.secret_key = os.environ.get("SECRET_KEY", "cvfinder-dev-key-change-in-prod")
 
-_cv_store: dict = {}  # simple in-process store for current CV text
+# ── Rate limiting ─────────────────────────────────────────────────
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per minute"],
+    storage_uri="memory://",
+)
+
+# ── In-process caches ─────────────────────────────────────────────
+_cv_store: dict   = {}                     # per-worker CV text store
+_job_cache        = TTLCache(maxsize=512, ttl=120)   # cache job searches 2 min
+_job_cache_lock   = threading.Lock()
 
 # ─────────────────────── ATS keyword data ────────────────────────
 
@@ -699,12 +713,17 @@ def score_job(job, cv_keywords):
 
 # ─────────────────────── Routes ──────────────────────────────────
 
+@app.errorhandler(429)
+def too_many_requests(e):
+    return jsonify({"error": "Too many requests — please wait a moment and try again"}), 429
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
 @app.route("/api/analyze-cv", methods=["POST"])
+@limiter.limit("10 per minute")
 def analyze_cv_route():
     if "cv" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -756,47 +775,55 @@ def analyze_cv_route():
 
 
 @app.route("/api/search-jobs", methods=["POST"])
+@limiter.limit("30 per minute")
 def search_jobs_route():
-    data        = request.get_json() or {}
-    field       = (data.get("field") or "").strip()
-    cv_keywords = data.get("cv_keywords", [])
+    data          = request.get_json() or {}
+    field         = (data.get("field") or "").strip()
+    cv_keywords   = data.get("cv_keywords", [])
     source_filter = (data.get("source") or "").strip()
     if not field:
         return jsonify({"error": "Please enter a job field"}), 400
 
-    # Pull from cache first
-    cached = db.search_jobs(field, source=source_filter or None, limit=600)
+    cache_key = f"{field.lower()}|{source_filter.lower()}"
+    with _job_cache_lock:
+        base_jobs = _job_cache.get(cache_key)
 
-    # Supplement with live scrape if cache is thin
-    live_jobs: list[dict] = []
-    if len(cached) < 30:
-        live_jobs = scrapers.scrape_live(field)
-        db.save_jobs(live_jobs)
-        cached = db.search_jobs(field, source=source_filter or None, limit=600)
+    if base_jobs is None:
+        base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
+        live_jobs: list[dict] = []
+        if len(base_jobs) < 30:
+            live_jobs = scrapers.scrape_live(field)
+            db.save_jobs(live_jobs)
+            base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
+        with _job_cache_lock:
+            _job_cache[cache_key] = base_jobs
 
-    # Tag India jobs and score by CV match
+    # Score and tag per-request (cv_keywords differ per user)
     india_cities = {
         "india", "bengaluru", "bangalore", "mumbai", "delhi", "hyderabad", "pune",
         "chennai", "kolkata", "noida", "gurgaon", "gurugram", "ahmedabad", "jaipur",
         "chandigarh", "kochi", "trivandrum", "bhubaneswar", "indore", "coimbatore",
     }
-    for job in cached:
-        loc = job.get("location", "").lower()
-        job["is_india"] = any(c in loc for c in india_cities)
-        job["match_score"], job["matched_keywords"] = score_job(job, cv_keywords)
+    jobs = []
+    for job in base_jobs:
+        j = dict(job)
+        loc = j.get("location", "").lower()
+        j["is_india"] = any(c in loc for c in india_cities)
+        j["match_score"], j["matched_keywords"] = score_job(j, cv_keywords)
+        jobs.append(j)
 
-    # Sort: India first within each match-score tier
-    cached.sort(key=lambda j: (-j["match_score"], 0 if j["is_india"] else 1))
+    jobs.sort(key=lambda j: (-j["match_score"], 0 if j["is_india"] else 1))
 
     return jsonify({
-        "jobs":        cached[:300],
-        "total":       len(cached),
-        "live_scraped": len(live_jobs) > 0,
+        "jobs":        jobs[:300],
+        "total":       len(jobs),
+        "live_scraped": False,
         "cached":      True,
     })
 
 
 @app.route("/api/match-jd", methods=["POST"])
+@limiter.limit("15 per minute")
 def match_jd_route():
     data    = request.get_json() or {}
     jd_text = (data.get("jd_text") or "").strip()

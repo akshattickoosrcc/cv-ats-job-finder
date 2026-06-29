@@ -3,10 +3,13 @@ services:
     name: cv-ats-job-finder
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
-    plan: free
+    startCommand: gunicorn wsgi:app -c gunicorn.conf.py
+    plan: starter
+    region: singapore
     envVars:
       - key: PORT
         value: 10000
       - key: SECRET_KEY
         generateValue: true
+      - key: WEB_CONCURRENCY
+        value: 4
