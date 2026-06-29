@@ -413,6 +413,7 @@
     .diff-new   { color: var(--danger); }
     .diff-same  { color: var(--muted); }
     .issue-fixed { text-decoration: line-through; opacity: .55; }
+    .issue-badge { font-size: .68rem; font-style: normal; font-weight: 700; color: var(--warning); background: var(--warning-light); padding: .1rem .35rem; border-radius: 999px; margin-left: .4rem; vertical-align: middle; }
 
     .india-tag {
       font-size: .66rem; font-weight: 700;
@@ -1137,7 +1138,7 @@ function renderATS(d) {
   const isNew = new Set(d.new_issues   || []);
   issuesList.innerHTML = issues.length
     ? issues.map(i => isNew.has(i)
-        ? li(`${i} <em style="font-size:.7rem;color:var(--warning);font-style:normal">(new)</em>`, iconX(), 'var(--danger)')
+        ? li(i, iconX(), 'var(--danger)', 'new')
         : li(i, iconX(), 'var(--danger)')
       ).join('')
     : li('No critical issues — your CV structure looks good', iconCheck(), 'var(--success)');
@@ -1263,8 +1264,8 @@ $('jd-match-btn').addEventListener('click', async () => {
 function stat(label, val, cls, iconSvg) {
   return `<div class="stat-row">${iconSvg}<span class="stat-lbl">${label}</span><span class="stat-val ${cls}">${esc(val)}</span></div>`;
 }
-function li(text, iconSvg, color) {
-  return `<li>${iconSvg.replace('--C--', color)}<span>${esc(text)}</span></li>`;
+function li(text, iconSvg, color, badge) {
+  return `<li>${iconSvg.replace('--C--', color)}<span>${esc(text)}${badge ? `<em class="issue-badge">${esc(badge)}</em>` : ''}</span></li>`;
 }
 
 /* ── Job search ── */
