@@ -889,41 +889,42 @@ def search_jobs_route():
     if not field:
         return jsonify({"error": "Please enter a job field"}), 400
 
-    cache_key = f"{field.lower()}|{source_filter.lower()}"
+    country       = (data.get("country") or "in").strip().lower()
+    cache_key     = f"{field.lower()}|{source_filter.lower()}|{country}"
     with _job_cache_lock:
         base_jobs = _job_cache.get(cache_key)
 
     if base_jobs is None:
         base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
+        # For non-India countries, also include any already-scraped international jobs
+        if country != "in":
+            base_jobs = [j for j in base_jobs if scrapers.detect_country(j.get("location", "")) == country]
+
         live_jobs: list[dict] = []
-        if len(base_jobs) < 30:
-            live_jobs = scrapers.scrape_live(field)
+        if len(base_jobs) < 15:
+            live_jobs = scrapers.scrape_live(field, country=country)
             db.save_jobs(live_jobs)
             base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
+            if country != "in":
+                base_jobs = [j for j in base_jobs if scrapers.detect_country(j.get("location", "")) == country]
         with _job_cache_lock:
             _job_cache[cache_key] = base_jobs
 
-    # Score and tag per-request (cv_keywords differ per user)
-    india_cities = {
-        "india", "bengaluru", "bangalore", "mumbai", "delhi", "hyderabad", "pune",
-        "chennai", "kolkata", "noida", "gurgaon", "gurugram", "ahmedabad", "jaipur",
-        "chandigarh", "kochi", "trivandrum", "bhubaneswar", "indore", "coimbatore",
-    }
     jobs = []
     for job in base_jobs:
         j = dict(job)
-        loc = j.get("location", "").lower()
-        j["is_india"] = any(c in loc for c in india_cities)
+        j["country"]  = scrapers.detect_country(j.get("location", ""))
         j["match_score"], j["matched_keywords"] = score_job(j, cv_keywords)
         jobs.append(j)
 
-    jobs.sort(key=lambda j: (-j["match_score"], 0 if j["is_india"] else 1))
+    jobs.sort(key=lambda j: -j["match_score"])
 
     return jsonify({
         "jobs":        jobs[:300],
         "total":       len(jobs),
         "live_scraped": False,
         "cached":      True,
+        "country":     country,
     })
 
 

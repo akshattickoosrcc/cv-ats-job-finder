@@ -246,10 +246,46 @@ INDIA_CITIES = {
     "chennai", "kolkata", "noida", "gurgaon", "gurugram", "ahmedabad", "jaipur",
     "chandigarh", "kochi", "trivandrum", "bhubaneswar", "indore", "coimbatore",
 }
+UK_CITIES = {
+    "united kingdom", "uk", "london", "manchester", "birmingham", "edinburgh",
+    "glasgow", "bristol", "leeds", "liverpool", "sheffield", "oxford", "cambridge",
+    "belfast", "cardiff", "nottingham", "reading", "coventry", "newcastle",
+}
+US_CITIES = {
+    "united states", "usa", "u.s.a", "new york", "san francisco", "seattle",
+    "austin", "boston", "chicago", "los angeles", "denver", "atlanta", "miami",
+    "dallas", "washington dc", "san jose", "portland", "remote, us", "remote (us)",
+}
+EU_COUNTRIES = {
+    "germany", "berlin", "munich", "frankfurt", "hamburg",
+    "netherlands", "amsterdam", "france", "paris",
+    "spain", "madrid", "barcelona", "portugal", "lisbon",
+    "sweden", "stockholm", "denmark", "copenhagen",
+    "ireland", "dublin", "switzerland", "zurich", "geneva",
+    "poland", "warsaw", "austria", "vienna", "europe",
+}
+AU_CITIES = {
+    "australia", "sydney", "melbourne", "brisbane", "perth", "adelaide", "canberra",
+}
+CA_CITIES = {
+    "canada", "toronto", "vancouver", "montreal", "calgary", "ottawa",
+}
 
 def is_india_location(loc: str) -> bool:
     loc_l = loc.lower()
     return any(city in loc_l for city in INDIA_CITIES)
+
+def detect_country(loc: str) -> str:
+    """Return a country code for a location string."""
+    loc_l = loc.lower()
+    if any(c in loc_l for c in UK_CITIES):    return "uk"
+    if any(c in loc_l for c in US_CITIES):    return "us"
+    if any(c in loc_l for c in AU_CITIES):    return "au"
+    if any(c in loc_l for c in CA_CITIES):    return "ca"
+    if any(c in loc_l for c in EU_COUNTRIES): return "eu"
+    if any(c in loc_l for c in INDIA_CITIES): return "in"
+    if "remote" in loc_l:                     return "remote"
+    return "other"
 
 
 # ─────────────────────── Naukri ──────────────────────────────────
@@ -527,6 +563,169 @@ def scrape_glassdoor(query: str) -> list[dict]:
     return jobs
 
 
+# ─────────────────────── Reed.co.uk (UK jobs) ───────────────────
+
+def scrape_reed_uk(query: str) -> list[dict]:
+    jobs = []
+    try:
+        encoded = urllib.parse.quote_plus(query)
+        url = f"https://www.reed.co.uk/jobs/{encoded}-jobs"
+        r = requests.get(url, headers=_h(), timeout=14)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "lxml")
+        cards = soup.select("article.job-result") or soup.select("[data-testid='job-card']")
+        for card in cards[:12]:
+            title_el   = card.select_one("h2 a") or card.select_one("a[data-gtm-id='job-card-title']")
+            company_el = card.select_one("a[data-gtm-id='company-name']") or card.select_one("[class*='employer']")
+            loc_el     = card.select_one("li.location") or card.select_one("[data-testid='location']")
+            if not title_el:
+                continue
+            href = title_el.get("href", "")
+            link = f"https://www.reed.co.uk{href}" if href.startswith("/") else href or "https://www.reed.co.uk/jobs"
+            jobs.append({
+                "title":    title_el.get_text(strip=True),
+                "company":  company_el.get_text(strip=True) if company_el else "Company",
+                "location": loc_el.get_text(strip=True) if loc_el else "United Kingdom",
+                "link":     link,
+                "source":   "Reed UK",
+            })
+    except Exception as e:
+        print(f"[Reed UK] {e}")
+    return jobs
+
+
+def scrape_linkedin_uk(query: str) -> list[dict]:
+    jobs = []
+    try:
+        encoded = urllib.parse.quote(query)
+        url = f"https://www.linkedin.com/jobs/search/?keywords={encoded}&location=United+Kingdom"
+        r = requests.get(url, headers=_h(), timeout=14)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "lxml")
+        cards = (
+            soup.select("ul.jobs-search__results-list li") or
+            soup.select("div.base-card") or
+            soup.select("div.job-search-card")
+        )
+        for card in cards[:12]:
+            title_el   = card.select_one("h3.base-search-card__title") or card.select_one("h3")
+            company_el = card.select_one("h4.base-search-card__subtitle") or card.select_one("a.job-card-container__company-name")
+            loc_el     = card.select_one("span.job-search-card__location") or card.select_one("[class*='location']")
+            link_el    = card.select_one("a.base-card__full-link") or card.select_one("a[href*='/jobs/view/']")
+            if not title_el:
+                continue
+            jobs.append({
+                "title":    title_el.get_text(strip=True),
+                "company":  company_el.get_text(strip=True) if company_el else "Company",
+                "location": loc_el.get_text(strip=True) if loc_el else "United Kingdom",
+                "link":     link_el["href"] if link_el else url,
+                "source":   "LinkedIn UK",
+            })
+    except Exception as e:
+        print(f"[LinkedIn UK] {e}")
+    return jobs
+
+
+def scrape_linkedin_us(query: str) -> list[dict]:
+    jobs = []
+    try:
+        encoded = urllib.parse.quote(query)
+        url = f"https://www.linkedin.com/jobs/search/?keywords={encoded}&location=United+States"
+        r = requests.get(url, headers=_h(), timeout=14)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "lxml")
+        cards = (
+            soup.select("ul.jobs-search__results-list li") or
+            soup.select("div.base-card") or
+            soup.select("div.job-search-card")
+        )
+        for card in cards[:12]:
+            title_el   = card.select_one("h3.base-search-card__title") or card.select_one("h3")
+            company_el = card.select_one("h4.base-search-card__subtitle") or card.select_one("a.job-card-container__company-name")
+            loc_el     = card.select_one("span.job-search-card__location") or card.select_one("[class*='location']")
+            link_el    = card.select_one("a.base-card__full-link") or card.select_one("a[href*='/jobs/view/']")
+            if not title_el:
+                continue
+            jobs.append({
+                "title":    title_el.get_text(strip=True),
+                "company":  company_el.get_text(strip=True) if company_el else "Company",
+                "location": loc_el.get_text(strip=True) if loc_el else "United States",
+                "link":     link_el["href"] if link_el else url,
+                "source":   "LinkedIn US",
+            })
+    except Exception as e:
+        print(f"[LinkedIn US] {e}")
+    return jobs
+
+
+def scrape_seek_au(query: str) -> list[dict]:
+    """Seek.com.au — Australia's largest job board."""
+    jobs = []
+    try:
+        encoded = urllib.parse.quote_plus(query)
+        url = f"https://www.seek.com.au/{encoded}-jobs"
+        r = requests.get(url, headers=_h(), timeout=14)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "lxml")
+        cards = soup.select("article[data-automation='normalJob']") or soup.select("[data-automation='jobCard']")
+        for card in cards[:12]:
+            title_el   = card.select_one("a[data-automation='jobTitle']") or card.select_one("h3 a")
+            company_el = card.select_one("a[data-automation='jobCompany']") or card.select_one("[class*='company']")
+            loc_el     = card.select_one("a[data-automation='jobLocation']") or card.select_one("[class*='location']")
+            if not title_el:
+                continue
+            href = title_el.get("href", "")
+            link = f"https://www.seek.com.au{href}" if href.startswith("/") else href or "https://www.seek.com.au"
+            jobs.append({
+                "title":    title_el.get_text(strip=True),
+                "company":  company_el.get_text(strip=True) if company_el else "Company",
+                "location": loc_el.get_text(strip=True) if loc_el else "Australia",
+                "link":     link,
+                "source":   "Seek AU",
+            })
+    except Exception as e:
+        print(f"[Seek AU] {e}")
+    return jobs
+
+
+def scrape_linkedin_eu(query: str) -> list[dict]:
+    """LinkedIn search scoped to Europe."""
+    jobs = []
+    try:
+        encoded = urllib.parse.quote(query)
+        url = f"https://www.linkedin.com/jobs/search/?keywords={encoded}&location=Europe"
+        r = requests.get(url, headers=_h(), timeout=14)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "lxml")
+        cards = (
+            soup.select("ul.jobs-search__results-list li") or
+            soup.select("div.base-card") or
+            soup.select("div.job-search-card")
+        )
+        for card in cards[:12]:
+            title_el   = card.select_one("h3.base-search-card__title") or card.select_one("h3")
+            company_el = card.select_one("h4.base-search-card__subtitle") or card.select_one("a.job-card-container__company-name")
+            loc_el     = card.select_one("span.job-search-card__location") or card.select_one("[class*='location']")
+            link_el    = card.select_one("a.base-card__full-link") or card.select_one("a[href*='/jobs/view/']")
+            if not title_el:
+                continue
+            jobs.append({
+                "title":    title_el.get_text(strip=True),
+                "company":  company_el.get_text(strip=True) if company_el else "Company",
+                "location": loc_el.get_text(strip=True) if loc_el else "Europe",
+                "link":     link_el["href"] if link_el else url,
+                "source":   "LinkedIn EU",
+            })
+    except Exception as e:
+        print(f"[LinkedIn EU] {e}")
+    return jobs
+
+
 # ─────────────────────── Full background scrape ──────────────────
 
 INDIA_SEARCH_TERMS = [
@@ -668,6 +867,31 @@ def run_full_scrape():
         total_saved += n
         print(f"[Scraper] Global boards: {len(board_jobs)} fetched, {n} new saved")
 
+        # ── International boards (UK / US / EU / AU) ──
+        INTL_TERMS = [
+            "software engineer", "data scientist", "product manager", "data engineer",
+            "machine learning engineer", "frontend developer", "backend developer",
+            "full stack developer", "devops engineer", "cloud engineer",
+        ]
+        def scrape_intl_for_term(term):
+            results = []
+            for fn in [scrape_reed_uk, scrape_linkedin_uk, scrape_linkedin_us, scrape_seek_au, scrape_linkedin_eu]:
+                try:
+                    results.extend(fn(term))
+                    time.sleep(0.4)
+                except Exception:
+                    pass
+            return results
+
+        intl_jobs: list[dict] = []
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futs = [ex.submit(scrape_intl_for_term, t) for t in INTL_TERMS]
+            for fut in as_completed(futs):
+                intl_jobs.extend(fut.result())
+        n = db.save_jobs(intl_jobs)
+        total_saved += n
+        print(f"[Scraper] International (UK/US/EU/AU): {len(intl_jobs)} fetched, {n} new saved")
+
         db.finish_scrape_log(log_id, total_saved, "done")
         print(f"[Scraper] Done. Total jobs in DB: {db.total_jobs()}")
     except Exception as e:
@@ -677,19 +901,27 @@ def run_full_scrape():
         _SCRAPE_RUNNING = False
 
 
-def scrape_live(query: str) -> list[dict]:
-    """Quick live scrape — India sources first, then global/remote."""
+def scrape_live(query: str, country: str = "in") -> list[dict]:
+    """Quick live scrape — routes to the right source based on country."""
     all_jobs: list[dict] = []
-    india_sources  = [scrape_naukri, scrape_internshala, scrape_timesjobs, scrape_shine, scrape_foundit, scrape_linkedin_india]
-    global_sources = [scrape_linkedin, scrape_indeed, scrape_wellfound, scrape_remoteok, scrape_wwr, scrape_glassdoor]
+    if country == "uk":
+        sources = [scrape_reed_uk, scrape_linkedin_uk, scrape_glassdoor]
+    elif country == "us":
+        sources = [scrape_linkedin_us, scrape_indeed, scrape_glassdoor, scrape_wellfound]
+    elif country == "au":
+        sources = [scrape_seek_au, scrape_linkedin]
+    elif country == "eu":
+        sources = [scrape_linkedin_eu, scrape_glassdoor]
+    elif country == "remote":
+        sources = [scrape_remoteok, scrape_wwr, scrape_wellfound, scrape_linkedin]
+    else:  # "in" or default
+        sources = [scrape_naukri, scrape_internshala, scrape_timesjobs, scrape_shine, scrape_foundit, scrape_linkedin_india]
+
     with ThreadPoolExecutor(max_workers=12) as ex:
-        futs = {ex.submit(fn, query): fn.__name__ for fn in india_sources + global_sources}
+        futs = {ex.submit(fn, query): fn.__name__ for fn in sources}
         for fut in as_completed(futs):
             try:
                 all_jobs.extend(fut.result(timeout=18))
             except Exception:
                 pass
-    # India-first ordering
-    india  = [j for j in all_jobs if is_india_location(j.get("location", ""))]
-    others = [j for j in all_jobs if not is_india_location(j.get("location", ""))]
-    return india + others
+    return all_jobs

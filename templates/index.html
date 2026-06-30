@@ -372,7 +372,22 @@
       padding: .22rem .75rem; border-radius: 999px; font-size: .76rem; font-weight: 700;
     }
 
-    .filter-row { display: flex; gap: .45rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
+    /* Country selector */
+    .country-row { display: flex; gap: .45rem; margin-bottom: .85rem; flex-wrap: wrap; }
+    .country-btn {
+      padding: .35rem 1rem; border-radius: 999px; font-size: .82rem; font-weight: 600;
+      cursor: pointer; border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text);
+      transition: all .15s;
+    }
+    .country-btn:hover { border-color: var(--primary); background: var(--primary-light); }
+    .country-btn.active {
+      border-color: var(--primary); background: var(--primary);
+      color: #fff; box-shadow: 0 2px 8px rgba(108,99,255,.25);
+    }
+
+    .filter-row { display: flex; gap: .45rem; margin-bottom: 1.1rem; flex-wrap: wrap; align-items: center; }
+    .filter-sep { width: 1px; height: 18px; background: var(--border); margin: 0 .2rem; }
     .filter-btn {
       padding: .3rem .85rem; border-radius: 999px; font-size: .76rem; font-weight: 600;
       cursor: pointer; border: 1.5px solid var(--border);
@@ -948,13 +963,22 @@
       <div class="search-banner-top">
         <div>
           <h2>Find Jobs</h2>
-          <p>Greenhouse · Lever · Naukri · Internshala · LinkedIn · Indeed &amp; more</p>
+          <p>Greenhouse · Lever · Naukri · Internshala · LinkedIn · Indeed · Reed UK · Seek AU &amp; more</p>
         </div>
         <div class="search-status-wrap">
           <div class="status-dot dot-gray" id="status-dot"></div>
           <span id="status-text" style="font-size:.78rem;color:var(--muted)">Loading…</span>
           <button class="refresh-btn" id="refresh-btn">Refresh DB</button>
         </div>
+      </div>
+      <!-- Country selector -->
+      <div class="country-row">
+        <button class="country-btn active" data-country="in">🇮🇳 India</button>
+        <button class="country-btn" data-country="us">🇺🇸 USA</button>
+        <button class="country-btn" data-country="uk">🇬🇧 UK</button>
+        <button class="country-btn" data-country="eu">🇪🇺 Europe</button>
+        <button class="country-btn" data-country="au">🇦🇺 Australia</button>
+        <button class="country-btn" data-country="remote">🌐 Remote</button>
       </div>
       <div class="search-row">
         <input type="text" class="search-input" id="job-field" placeholder="e.g. Software Engineer, Data Analyst, Marketing Manager…" />
@@ -985,20 +1009,25 @@
       <div class="filter-row" id="filter-row">
         <button class="filter-btn active" data-filter="all">All</button>
         <button class="filter-btn" data-filter="saved">Saved</button>
-        <button class="filter-btn" data-filter="india">India</button>
-        <button class="filter-btn" data-filter="Naukri">Naukri</button>
-        <button class="filter-btn" data-filter="Internshala">Internshala</button>
-        <button class="filter-btn" data-filter="TimesJobs">TimesJobs</button>
-        <button class="filter-btn" data-filter="Shine">Shine</button>
-        <button class="filter-btn" data-filter="Foundit">Foundit</button>
-        <button class="filter-btn" data-filter="LinkedIn">LinkedIn</button>
-        <button class="filter-btn" data-filter="Greenhouse">Greenhouse</button>
-        <button class="filter-btn" data-filter="Lever">Lever</button>
-        <button class="filter-btn" data-filter="Indeed">Indeed</button>
-        <button class="filter-btn" data-filter="Wellfound">Wellfound</button>
-        <button class="filter-btn" data-filter="RemoteOK">RemoteOK</button>
-        <button class="filter-btn" data-filter="WeWorkRemotely">WWR</button>
-        <button class="filter-btn" data-filter="Glassdoor">Glassdoor</button>
+        <span class="filter-sep"></span>
+        <button class="filter-btn src-btn" data-filter="Naukri" style="display:none">Naukri</button>
+        <button class="filter-btn src-btn" data-filter="Internshala" style="display:none">Internshala</button>
+        <button class="filter-btn src-btn" data-filter="TimesJobs" style="display:none">TimesJobs</button>
+        <button class="filter-btn src-btn" data-filter="Shine" style="display:none">Shine</button>
+        <button class="filter-btn src-btn" data-filter="Foundit" style="display:none">Foundit</button>
+        <button class="filter-btn src-btn" data-filter="LinkedIn" style="display:none">LinkedIn</button>
+        <button class="filter-btn src-btn" data-filter="LinkedIn UK" style="display:none">LinkedIn UK</button>
+        <button class="filter-btn src-btn" data-filter="LinkedIn US" style="display:none">LinkedIn US</button>
+        <button class="filter-btn src-btn" data-filter="LinkedIn EU" style="display:none">LinkedIn EU</button>
+        <button class="filter-btn src-btn" data-filter="Greenhouse" style="display:none">Greenhouse</button>
+        <button class="filter-btn src-btn" data-filter="Lever" style="display:none">Lever</button>
+        <button class="filter-btn src-btn" data-filter="Indeed" style="display:none">Indeed</button>
+        <button class="filter-btn src-btn" data-filter="Wellfound" style="display:none">Wellfound</button>
+        <button class="filter-btn src-btn" data-filter="RemoteOK" style="display:none">RemoteOK</button>
+        <button class="filter-btn src-btn" data-filter="WeWorkRemotely" style="display:none">WWR</button>
+        <button class="filter-btn src-btn" data-filter="Glassdoor" style="display:none">Glassdoor</button>
+        <button class="filter-btn src-btn" data-filter="Reed UK" style="display:none">Reed UK</button>
+        <button class="filter-btn src-btn" data-filter="Seek AU" style="display:none">Seek AU</button>
       </div>
       <div class="jobs-grid" id="jobs-grid"></div>
       <p class="scrape-notice" id="scrape-notice"></p>
@@ -1014,6 +1043,7 @@
 /* ── State ── */
 let allJobs         = [];
 let activeFilter    = 'all';
+let activeCountry   = 'in';
 let cvKeywords      = [];
 let statusPollTimer = null;
 let savedJobs       = JSON.parse(localStorage.getItem('savedJobs') || '{}'); // {id: {title,company,link,source}}
@@ -1357,22 +1387,34 @@ function li(text, iconSvg, color, badge) {
   return `<li>${iconSvg.replace('--C--', color)}<span>${esc(text)}${badge ? `<em class="issue-badge">${esc(badge)}</em>` : ''}</span></li>`;
 }
 
+/* ── Country selector ── */
+document.querySelectorAll('.country-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.country-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeCountry = btn.dataset.country;
+  });
+});
+
 /* ── Job search ── */
 searchBtn.addEventListener('click', doSearch);
 jobField.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+const COUNTRY_LABELS = { in: '🇮🇳 India', us: '🇺🇸 USA', uk: '🇬🇧 UK', eu: '🇪🇺 Europe', au: '🇦🇺 Australia', remote: '🌐 Remote' };
 
 async function doSearch() {
   const field = jobField.value.trim();
   if (!field) { toast('Enter a job field first'); return; }
   searchBtn.disabled = true;
-  jobSpinLbl.textContent = 'Searching job database…';
+  const countryLabel = COUNTRY_LABELS[activeCountry] || activeCountry;
+  jobSpinLbl.textContent = `Searching ${countryLabel} jobs…`;
   jobsSpin.classList.add('on');
   jobSection.style.display = 'none';
   try {
     const res  = await fetch('/api/search-jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field, cv_keywords: cvKeywords }),
+      body: JSON.stringify({ field, cv_keywords: cvKeywords, country: activeCountry }),
     });
     const data = await res.json();
     if (!res.ok) { toast(data.error || 'Search failed'); return; }
@@ -1388,13 +1430,12 @@ async function doSearch() {
     jobSection.classList.add('fade-in');
     jobSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    const cached     = data.cached ? '(from cache)' : '';
-    const liveNote   = data.live_scraped ? ' + live web scrape' : '';
+    const countryLabel = COUNTRY_LABELS[activeCountry] || activeCountry;
     if (allJobs.length === 0) {
-      toast('No matching jobs found — try a broader term like "engineer" or "developer"', 'error');
-      scrapeNote.textContent = 'No results found. Try a broader term, or click "Refresh All Jobs" to rebuild the database.';
+      toast(`No ${countryLabel} jobs found — try a broader term or different country`, 'error');
+      scrapeNote.textContent = 'No results found. Try a broader term, or switch country.';
     } else {
-      toast(`Found ${allJobs.length} matching jobs ${cached}${liveNote}`, 'success');
+      toast(`Found ${allJobs.length} ${countryLabel} jobs`, 'success');
       const srcs = [...new Set(allJobs.map(j => j.source))].join(', ');
       scrapeNote.textContent = `Sources: ${srcs}. Click "Apply Now" to open each listing directly.`;
     }
@@ -1407,15 +1448,11 @@ async function doSearch() {
   }
 }
 
-/* ── Filters — only show sources/tags present in results ── */
+/* ── Filters — only show sources present in results ── */
 function updateSourceFilters() {
   const presentSources = new Set(allJobs.map(j => j.source));
-  const hasIndia = allJobs.some(j => j.is_india);
-  document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
-    const f = btn.dataset.filter;
-    if (f === 'all')   { btn.style.display = ''; return; }
-    if (f === 'india') { btn.style.display = hasIndia ? '' : 'none'; return; }
-    btn.style.display = presentSources.has(f) ? '' : 'none';
+  document.querySelectorAll('.filter-btn.src-btn').forEach(btn => {
+    btn.style.display = presentSources.has(btn.dataset.filter) ? '' : 'none';
   });
 }
 
@@ -1430,7 +1467,6 @@ document.querySelectorAll('.filter-btn').forEach(btn =>
 
 function renderJobs() {
   let list = activeFilter === 'all'   ? allJobs
-           : activeFilter === 'india' ? allJobs.filter(j => j.is_india)
            : activeFilter === 'saved' ? allJobs.filter(j => savedJobs[jobKey(j)])
            : allJobs.filter(j => j.source === activeFilter);
 
@@ -1477,12 +1513,13 @@ function renderJobs() {
         ${extra > 0 ? `<span class="jc-kw-more">+${extra} more</span>` : ''}
       </div>` : ''}` : '';
 
-    const indiaTag = job.is_india ? `<span class="india-tag">India</span>` : '';
+    const COUNTRY_FLAGS = { in: '🇮🇳', us: '🇺🇸', uk: '🇬🇧', eu: '🇪🇺', au: '🇦🇺', ca: '🇨🇦', remote: '🌐' };
+    const countryFlag = job.country && COUNTRY_FLAGS[job.country] ? `<span class="india-tag">${COUNTRY_FLAGS[job.country]}</span>` : '';
     return `<div class="job-card fade-in${isBest ? ' best-match' : ''}">
       ${isBest ? '<div class="best-match-ribbon">Best Match</div>' : ''}
       <div class="jc-top">
         <div class="jc-title">${esc(job.title)}</div>
-        <div style="display:flex;gap:.3rem;align-items:center;flex-shrink:0">${indiaTag}<span class="jc-badge ${badgeCls}">${esc(job.source)}</span></div>
+        <div style="display:flex;gap:.3rem;align-items:center;flex-shrink:0">${countryFlag}<span class="jc-badge ${badgeCls}">${esc(job.source)}</span></div>
       </div>
       <div class="jc-company">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
