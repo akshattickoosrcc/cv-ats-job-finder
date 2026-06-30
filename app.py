@@ -112,6 +112,10 @@ def parse_cv_text(file_stream):
 # ─────────────────────── ATS analysis ────────────────────────────
 
 def analyze_ats(text):
+    """
+    Research-backed ATS scoring (Belsack + industry best practices).
+    5 sections: Contact(15) + Structure(25) + Content(30) + Formatting(20) + Keywords(10)
+    """
     t = text.lower()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     issues = []
@@ -127,89 +131,171 @@ def analyze_ats(text):
     has_github   = "github" in t or "portfolio" in t
 
     if has_email:    c_score += 6
-    else:            issues.append("No email address detected"); suggestions.append("Add a professional email address at the top")
+    else:            issues.append("No email address detected"); suggestions.append("Add a professional email address at the top of your CV")
     if has_phone:    c_score += 5
     else:            issues.append("No phone number found"); suggestions.append("Include a phone number with country code (+91 for India)")
     if has_linkedin: c_score += 2
-    else:            suggestions.append("Add your LinkedIn profile URL — recruiters always check")
+    # Research: bare-bones LinkedIn hurts — warn if present but flag if missing
+    else:            suggestions.append("Add your LinkedIn profile URL — recruiters always verify it (ensure it's complete with headshot and full work history)")
     if has_github:   c_score += 2
-    else:            suggestions.append("Add a GitHub/portfolio link to show your work")
+    else:            suggestions.append("Add a GitHub or portfolio link — shows real work beyond the CV")
     sections["contact"] = {"label": "Contact Info", "score": c_score, "max": 15}
 
     # ── Section 2: Structure (25 pts) ────────────────────────────
+    # Research: Skills section should be at top; Experience before Education for candidates with work history
     s_score = 0
     weights = {"experience": 9, "education": 6, "skills": 6, "summary": 2, "projects": 2}
+    has_experience = any(kw in t for kw in SECTION_PATTERNS["experience"])
     for section, pts in weights.items():
         if any(kw in t for kw in SECTION_PATTERNS[section]):
             s_score += pts
         else:
             issues.append(f"'{section.capitalize()}' section not clearly labeled")
-            suggestions.append(f"Add a clear '{section.capitalize()}' heading — ATS parsers need it")
+            suggestions.append(f"Add a clear '{section.capitalize()}' heading — ATS parsers need exact labels")
+
+    # Research: projects section critical for students/freshers
+    if not any(kw in t for kw in SECTION_PATTERNS["projects"]):
+        if not has_experience:
+            issues.append("No Projects section — critical for candidates with limited experience")
+            suggestions.append("Add 3–4 significant projects with technologies used and outcomes")
+
     sections["structure"] = {"label": "Structure", "score": s_score, "max": 25}
 
     # ── Section 3: Content quality (30 pts) ──────────────────────
+    # Research: XYZ formula, 5+ metrics doubles interview rate, action verbs mandatory
     q_score = 0
-    found_verbs   = [v for v in ACTION_VERBS if v in t]
-    q_score      += min(15, len(found_verbs) * 2)
-    missing_verbs = [v for v in ACTION_VERBS if v not in t]
-    if len(found_verbs) < 5:
-        missing_keywords.extend(missing_verbs[:6])
-        suggestions.append(f"Use stronger action verbs: {', '.join(missing_verbs[:5])}")
-    elif len(found_verbs) < 8:
-        suggestions.append(f"More impact verbs would help: {', '.join(missing_verbs[:3])}")
 
+    # Action verbs check
+    found_verbs   = [v for v in ACTION_VERBS if re.search(r"\b" + v + r"\b", t)]
+    q_score      += min(10, len(found_verbs) * 1)
+    missing_verbs = [v for v in ACTION_VERBS if v not in t]
+    if len(found_verbs) < 4:
+        issues.append("Too few action verbs — bullet points lack impact")
+        missing_keywords.extend(missing_verbs[:6])
+        suggestions.append(f"Start bullet points with strong verbs: {', '.join(missing_verbs[:5])}")
+    elif len(found_verbs) < 8:
+        suggestions.append(f"Add more impact verbs: try {', '.join(missing_verbs[:3])}")
+
+    # Metric density — research shows 5+ metrics doubles interview rate
     qty_patterns = [
-        r"\d+\s*%", r"[₹$€]\s*[\d,]+", r"\b\d+\s*(million|thousand|crore|lakh|k|m)\b",
-        r"\b\d{2,}\s*(users|customers|clients|projects|employees|members|students|leads)\b",
-        r"(increased|decreased|reduced|improved|grew|saved|generated|drove)\s+\w*\s*\d+",
+        r"\d+\s*%",
+        r"[₹$€£]\s*[\d,]+",
+        r"\b\d+\s*(million|thousand|crore|lakh|k\b|m\b)",
+        r"\b\d{2,}\s*(users|customers|clients|projects|employees|members|students|leads|orders|tickets|calls|deals)",
+        r"(increased|decreased|reduced|improved|grew|saved|generated|drove|boosted|cut|doubled|tripled)\s+[\w\s]*\d+",
+        r"\b(top|rank(ed)?|first|second)\s+\d+\s*%",
+        r"\b\d+\s*(award|certification|course|module|feature|product)",
     ]
-    qty = sum(1 for p in qty_patterns if re.search(p, t))
-    q_score += min(15, qty * 5)
-    if qty == 0:
-        issues.append("No quantifiable achievements found")
-        suggestions.append("Add numbers: 'Increased revenue 30%', 'Managed team of 8', 'Served 500+ customers'")
-    elif qty < 3:
-        suggestions.append("Add more metrics — aim for 4–6 quantified achievements across your experience")
-    sections["content"] = {"label": "Content Quality", "score": q_score, "max": 30}
+    metric_count = sum(1 for p in qty_patterns if re.search(p, t))
+
+    if metric_count == 0:
+        issues.append("No measurable metrics found — CVs with 5+ metrics double interview rates")
+        suggestions.append("Quantify everything: '30% increase', 'managed 8-person team', '500+ customers served'")
+        q_score += 0
+    elif metric_count < 3:
+        issues.append(f"Only {metric_count} metric(s) found — aim for at least 5 measurable achievements")
+        suggestions.append("Use the XYZ formula: 'Accomplished [X] as measured by [Y], by doing [Z]'")
+        q_score += min(8, metric_count * 3)
+    elif metric_count < 5:
+        suggestions.append(f"Good — {metric_count} metrics found. Add {5 - metric_count} more to reach the high-impact threshold")
+        q_score += min(14, metric_count * 3)
+    else:
+        q_score += min(20, metric_count * 2)
+
+    # Buzzword / fluff detection — research: 51% of CVs hurt by buzzwords
+    BUZZWORDS = [
+        "rockstar", "ninja", "guru", "wizard", "detail-oriented", "detail oriented",
+        "team player", "hard worker", "passionate about", "go-getter", "self-starter",
+        "think outside the box", "synergy", "leverage", "proactive", "dynamic",
+        "results-driven", "motivated individual",
+    ]
+    found_buzz = [b for b in BUZZWORDS if b in t]
+    if found_buzz:
+        issues.append(f"Buzzwords detected: '{found_buzz[0]}' — these reduce credibility")
+        suggestions.append(f"Replace '{found_buzz[0]}' with a specific achievement. Show don't tell.")
+        q_score = max(0, q_score - 2)
+
+    # Irrelevant skills — research: MS Word, PowerPoint waste space
+    IRRELEVANT = ["microsoft word", "ms word", "microsoft powerpoint", "ms powerpoint", "microsoft excel basic"]
+    found_irrelevant = [s for s in IRRELEVANT if s in t]
+    if found_irrelevant:
+        suggestions.append("Remove basic tools like 'MS Word' or 'PowerPoint' — they waste space; add domain-specific skills instead")
+
+    # Self-rating check — research: subjective ratings are a red flag
+    if re.search(r"\b[1-5]\s*/\s*5\b|\b[1-9]\s*/\s*10\b|\d+\s*stars?", t):
+        issues.append("Self-rated skills (e.g. '4/5') detected — these are subjective and hurt credibility")
+        suggestions.append("Remove skill ratings — list tools you've used without rating yourself")
+        q_score = max(0, q_score - 2)
+
+    sections["content"] = {"label": "Content Quality", "score": min(30, q_score), "max": 30}
 
     # ── Section 4: Formatting (20 pts) ───────────────────────────
+    # Research: 475-600 word sweet spot = 2x interview rate; 7s recruiter scan; bullets essential
     f_score = 0
     words = len(text.split())
-    if   300 <= words <= 800:   f_score += 10
-    elif 800 < words <= 1200:   f_score += 6;  suggestions.append(f"CV is {words} words — trim to 1–2 pages for best results")
-    elif words < 300:           f_score += 3;  issues.append(f"CV is very short ({words} words)"); suggestions.append("Expand experience and skills sections")
-    else:                       f_score += 2;  issues.append(f"CV is too long ({words} words)"); suggestions.append("Trim to 1–2 pages — ATS and recruiters prefer concise CVs")
 
+    # Word count — research sweet spot is 475-600 words
+    if 475 <= words <= 600:
+        f_score += 10
+    elif 400 <= words < 475 or 600 < words <= 800:
+        f_score += 7
+        suggestions.append(f"CV is {words} words — the research-backed sweet spot is 475–600 words for 2x interview rate")
+    elif 300 <= words < 400 or 800 < words <= 1000:
+        f_score += 4
+        if words < 400:
+            issues.append(f"CV is too short ({words} words) — sweet spot is 475–600 words")
+            suggestions.append("Expand bullet points with specific achievements and context")
+        else:
+            issues.append(f"CV is too long ({words} words) — trim to 475–600 words for best results")
+            suggestions.append("Remove irrelevant experience, cut buzzwords, and tighten bullet points to 3 lines max")
+    else:
+        f_score += 1
+        if words < 300:
+            issues.append(f"CV is very short ({words} words) — needs significant expansion")
+        else:
+            issues.append(f"CV is very long ({words} words) — cut aggressively to under 700 words")
+
+    # Bullet points — research: essential for 7-second recruiter scan
     has_bullets = any(re.match(r"^[•\-\*·▪▸►]", l) for l in lines)
-    has_dates   = bool(re.search(r"\b(19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4}", t))
     if has_bullets: f_score += 5
-    else:           issues.append("No bullet points detected"); suggestions.append("Use bullet points — ATS parsers and recruiters expect them")
-    if has_dates:   f_score += 5
-    else:           issues.append("Employment/education dates missing"); suggestions.append("Add month–year dates (e.g. 'Jun 2022 – Present') to every role")
+    else:           issues.append("No bullet points detected"); suggestions.append("Use bullet points — recruiters scan in 7 seconds and need structured lists")
 
+    # Dates
+    has_dates = bool(re.search(r"\b(19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{4}", t))
+    if has_dates: f_score += 5
+    else:         issues.append("Employment/education dates missing"); suggestions.append("Add month–year dates (e.g. 'Jun 2022 – Present') to every role and degree")
+
+    # Non-ASCII / special characters
     non_ascii = len(re.findall(r"[^\x00-\x7F]", text))
     if non_ascii > 30:
         f_score = max(0, f_score - 3)
-        issues.append(f"{non_ascii} non-ASCII characters detected — may corrupt ATS parsing")
-        suggestions.append("Remove special characters, fancy bullets, or symbols")
+        issues.append(f"{non_ascii} non-ASCII characters — may corrupt ATS parsing")
+        suggestions.append("Remove special characters, fancy bullets, or symbols; use plain hyphens (-)")
+
+    # Table formatting
     if re.search(r"(\|[^\|]+\|){2,}", text):
         f_score = max(0, f_score - 2)
-        issues.append("Table formatting detected — ATS systems misread tables")
+        issues.append("Table formatting detected — ATS systems cannot read tables")
         suggestions.append("Replace tables with plain bullet lists")
-    sections["formatting"] = {"label": "Formatting", "score": f_score, "max": 20}
+
+    sections["formatting"] = {"label": "Formatting", "score": min(20, f_score), "max": 20}
 
     # ── Section 5: Keyword density (10 pts) ──────────────────────
+    # Research: average JD has 43 keywords; most candidates only match 51%
     found_skills = [s for s in TECH_SKILLS if re.search(r"\b" + re.escape(s) + r"\b", t)]
     k_score = min(10, len(found_skills))
     if len(found_skills) < 5:
-        issues.append("Few technical/domain keywords found")
-        suggestions.append("Add a dedicated Skills section listing your tools, languages, and platforms")
+        issues.append("Few technical/domain keywords — likely to be filtered by ATS before a human sees it")
+        suggestions.append("Add a dedicated Skills section: list languages, tools, frameworks, certifications")
+    elif len(found_skills) < 10:
+        suggestions.append(f"{len(found_skills)} technical keywords found — try to reach 15+ for strong ATS pass rate")
     sections["keywords"] = {"label": "Keywords", "score": k_score, "max": 10}
 
     total = sum(s["score"] for s in sections.values())
     return {
         "score": max(0, min(100, total)),
         "word_count": words,
+        "metric_count": metric_count,
         "missing_keywords": list(set(missing_keywords))[:10],
         "issues": issues,
         "suggestions": suggestions,
