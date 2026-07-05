@@ -988,6 +988,75 @@ def is_scrape_running() -> bool:
     return _SCRAPE_RUNNING
 
 
+def run_fast_scrape():
+    """
+    Lightweight startup scrape for Render free tier.
+    Only uses JSON APIs (Greenhouse + Lever + 4 free remote APIs) — no HTML
+    parsing, no BeautifulSoup, no lxml. Runs in ~30s and seeds the DB with
+    thousands of jobs without the memory spike of run_full_scrape().
+    """
+    global _SCRAPE_RUNNING
+    if _SCRAPE_RUNNING:
+        return
+    _SCRAPE_RUNNING = True
+    log_id = db.start_scrape_log()
+    total_saved = 0
+    print("[FastScrape] Starting lightweight seed scrape")
+    try:
+        db.clear_old_jobs(keep_days=3)
+
+        # Greenhouse — India-only JSON API pass (fast, no HTML)
+        gh_jobs: list[dict] = []
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futs = {ex.submit(scrape_greenhouse, c, True): c for c in GREENHOUSE_COMPANIES}
+            for fut in as_completed(futs):
+                gh_jobs.extend(fut.result())
+        n = db.save_jobs(gh_jobs)
+        total_saved += n
+        print(f"[FastScrape] Greenhouse: {len(gh_jobs)} fetched, {n} saved")
+
+        # Lever — India-only JSON API pass (fast, no HTML)
+        lv_jobs: list[dict] = []
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futs = {ex.submit(scrape_lever, c, True): c for c in LEVER_COMPANIES}
+            for fut in as_completed(futs):
+                lv_jobs.extend(fut.result())
+        n = db.save_jobs(lv_jobs)
+        total_saved += n
+        print(f"[FastScrape] Lever: {len(lv_jobs)} fetched, {n} saved")
+
+        # Free remote job APIs — fast JSON, broad role coverage (parallel)
+        REMOTE_TERMS = [
+            "software engineer", "data scientist", "product manager",
+            "data engineer", "machine learning", "frontend", "backend",
+            "devops", "full stack", "mobile developer",
+        ]
+        def _fetch_remote(term_fn):
+            term, fn = term_fn
+            try:
+                return fn(term)
+            except Exception:
+                return []
+
+        remote_jobs: list[dict] = []
+        combos = [(t, fn) for t in REMOTE_TERMS
+                  for fn in [scrape_remotive, scrape_jobicy, scrape_remoteok, scrape_wwr]]
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for result in ex.map(_fetch_remote, combos):
+                remote_jobs.extend(result)
+        n = db.save_jobs(remote_jobs)
+        total_saved += n
+        print(f"[FastScrape] Remote APIs: {len(remote_jobs)} fetched, {n} saved")
+
+        db.finish_scrape_log(log_id, total_saved, "done")
+        print(f"[FastScrape] Done — {total_saved} new jobs seeded")
+    except Exception as e:
+        db.finish_scrape_log(log_id, total_saved, f"error: {e}")
+        print(f"[FastScrape] Error: {e}")
+    finally:
+        _SCRAPE_RUNNING = False
+
+
 def run_full_scrape():
     global _SCRAPE_RUNNING
     if _SCRAPE_RUNNING:
