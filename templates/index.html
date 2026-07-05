@@ -7,28 +7,28 @@
   <style>
     /* ── Design tokens ── */
     :root {
-      --primary:       #6c63ff;
-      --primary-dark:  #4f46e5;
-      --primary-light: #eeeeff;
-      --primary-grad:  linear-gradient(135deg, #6c63ff 0%, #a78bfa 100%);
-      --success:       #10b981;
-      --success-light: #d1fae5;
-      --warning:       #f59e0b;
+      --primary:       #4f46e5;
+      --primary-dark:  #3730a3;
+      --primary-light: #eeecfb;
+      --primary-grad:  linear-gradient(135deg, #5b5bd6 0%, #7c7ae8 100%);
+      --success:       #16a34a;
+      --success-light: #dcfce7;
+      --warning:       #d97706;
       --warning-light: #fef3c7;
-      --danger:        #ef4444;
+      --danger:        #dc2626;
       --danger-light:  #fee2e2;
-      --bg:            #f5f4ff;
+      --bg:            #f4f4f8;
       --surface:       #ffffff;
-      --surface-2:     #fafafe;
-      --text:          #1e1b4b;
-      --muted:         #6b7280;
-      --border:        #e5e7eb;
-      --shadow:        0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(108,99,255,.07);
-      --shadow-md:     0 4px 12px rgba(0,0,0,.08), 0 8px 24px rgba(108,99,255,.09);
-      --shadow-lg:     0 8px 32px rgba(108,99,255,.15);
-      --radius:        18px;
-      --radius-sm:     10px;
-      --radius-xs:     7px;
+      --surface-2:     #fafafa;
+      --text:          #111118;
+      --muted:         #71717a;
+      --border:        #e4e4e7;
+      --shadow:        0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04);
+      --shadow-md:     0 4px 12px rgba(0,0,0,.07);
+      --shadow-lg:     0 8px 24px rgba(0,0,0,.10);
+      --radius:        12px;
+      --radius-sm:     8px;
+      --radius-xs:     6px;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -36,7 +36,6 @@
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
-      background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(108,99,255,.12), transparent);
       color: var(--text);
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
@@ -44,11 +43,11 @@
 
     /* ── Header ── */
     header {
-      background: rgba(255,255,255,.92);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      background: rgba(255,255,255,.95);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
-      padding: 1rem 2rem;
+      padding: .875rem 2rem;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -60,32 +59,30 @@
     .header-logo {
       display: inline-flex;
       align-items: center;
-      gap: .6rem;
-      font-size: 1.1rem;
-      font-weight: 800;
-      letter-spacing: -.03em;
+      gap: .55rem;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -.02em;
       color: var(--text);
       white-space: nowrap;
     }
     .header-logo-dot {
-      width: 34px; height: 34px;
-      border-radius: 10px;
-      background: var(--primary-grad);
+      width: 30px; height: 30px;
+      border-radius: 8px;
+      background: var(--primary);
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
-      box-shadow: 0 3px 10px rgba(108,99,255,.35);
     }
-    .header-logo-dot svg { color: #fff; width: 18px; height: 18px; }
+    .header-logo-dot svg { color: #fff; width: 16px; height: 16px; }
     .header-tagline {
       font-size: .78rem;
       color: var(--muted);
       font-weight: 400;
-      white-space: nowrap;
     }
     .header-right { display: flex; align-items: center; gap: .75rem; }
 
     /* ── Main wrapper ── */
-    main { max-width: 980px; margin: 2.5rem auto 6rem; padding: 0 1.5rem; }
+    main { max-width: 960px; margin: 3rem auto 6rem; padding: 0 1.5rem; }
 
     /* ── Steps ── */
     .step { display: none; }
@@ -101,55 +98,51 @@
 
     /* ─────── STEP 1 — Upload ─────── */
     .upload-wrap {
-      max-width: 560px;
+      max-width: 480px;
       margin: 0 auto;
-      padding-top: 1rem;
+      padding-top: 1.5rem;
     }
     .upload-heading {
-      font-size: 2rem;
+      font-size: 2.5rem;
       font-weight: 800;
       color: var(--text);
       margin-bottom: .5rem;
-      letter-spacing: -.04em;
-      line-height: 1.2;
+      letter-spacing: -.05em;
+      line-height: 1.1;
     }
-    .upload-heading span {
-      background: var(--primary-grad);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .upload-sub { color: var(--muted); font-size: .92rem; margin-bottom: 2rem; line-height: 1.6; }
+    .upload-heading span { color: var(--primary); }
+    .upload-sub { color: var(--muted); font-size: .875rem; margin-bottom: 1.75rem; line-height: 1.65; }
 
     .upload-features {
-      display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      margin-bottom: 1.75rem;
     }
     .upload-feature-pill {
-      display: inline-flex; align-items: center; gap: .4rem;
-      padding: .35rem .85rem;
+      display: inline-flex; align-items: center; gap: .35rem;
+      padding: .3rem .75rem;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 999px;
-      font-size: .78rem; font-weight: 600; color: var(--muted);
-      box-shadow: var(--shadow);
+      font-size: .76rem; font-weight: 500; color: var(--muted);
+      white-space: nowrap;
     }
-    .upload-feature-pill svg { width: 13px; height: 13px; color: var(--primary); flex-shrink: 0; }
+    .upload-feature-pill svg { width: 12px; height: 12px; color: var(--primary); flex-shrink: 0; }
 
     .drop-zone {
       position: relative;
-      border: 2px dashed #c7c4e8;
+      border: 1.5px dashed var(--border);
       border-radius: var(--radius);
-      padding: 3rem 2rem;
+      padding: 2.5rem 2rem;
       cursor: pointer;
       background: var(--surface);
-      transition: border-color .2s, background .2s, box-shadow .2s;
+      transition: border-color .15s, background .15s;
       text-align: center;
-      box-shadow: var(--shadow);
     }
     .drop-zone:hover, .drop-zone.dragging {
       border-color: var(--primary);
-      background: #f5f3ff;
-      box-shadow: 0 0 0 4px rgba(108,99,255,.08), var(--shadow-md);
+      background: var(--primary-light);
     }
     .drop-zone input[type="file"] {
       position: absolute; inset: 0;
@@ -157,65 +150,59 @@
       opacity: 0; cursor: pointer;
     }
     .dz-icon-wrap {
-      width: 64px; height: 64px;
-      border-radius: 16px;
-      background: var(--primary-grad);
-      box-shadow: 0 6px 18px rgba(108,99,255,.3);
+      width: 48px; height: 48px;
+      border-radius: 10px;
+      background: var(--primary-light);
+      border: 1px solid #d0ceef;
       display: flex; align-items: center; justify-content: center;
       margin: 0 auto 1rem;
     }
-    .dz-icon { width: 30px; height: 30px; color: #fff; }
-    .drop-zone h3 { font-size: 1.1rem; font-weight: 700; color: var(--text); margin-top: .25rem; }
-    .drop-zone p  { color: var(--muted); margin-top: .35rem; font-size: .85rem; }
+    .dz-icon { width: 22px; height: 22px; color: var(--primary); }
+    .drop-zone h3 { font-size: 1rem; font-weight: 600; color: var(--text); }
+    .drop-zone p  { color: var(--muted); margin-top: .3rem; font-size: .82rem; }
 
     .file-pill {
       display: none;
       align-items: center;
-      gap: .5rem;
+      gap: .45rem;
       margin: 1rem auto 0;
       width: fit-content;
-      padding: .45rem 1rem;
-      background: var(--primary-light);
+      padding: .4rem .9rem;
+      background: var(--success-light);
       border-radius: 999px;
-      font-size: .85rem;
+      font-size: .82rem;
       font-weight: 600;
-      color: var(--primary-dark);
+      color: var(--success);
+      border: 1px solid #bbf7d0;
     }
     .file-pill.visible { display: inline-flex; }
 
     .btn {
       display: inline-flex;
       align-items: center;
-      gap: .45rem;
-      padding: .8rem 1.9rem;
+      gap: .4rem;
+      padding: .7rem 1.5rem;
       border: none;
       border-radius: var(--radius-sm);
-      font-size: .95rem;
-      font-weight: 700;
+      font-size: .9rem;
+      font-weight: 600;
       cursor: pointer;
-      transition: all .18s ease;
+      transition: opacity .15s, box-shadow .15s;
       text-decoration: none;
       line-height: 1;
       letter-spacing: -.01em;
     }
-    .btn:disabled { opacity: .4; cursor: not-allowed; transform: none !important; }
-    .btn-primary {
-      background: var(--primary-grad);
-      color: #fff;
-      box-shadow: 0 4px 14px rgba(108,99,255,.35);
-    }
-    .btn-primary:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(108,99,255,.45);
-    }
-    .btn-primary:active:not(:disabled) { transform: translateY(0); }
-    .btn-ghost { background: transparent; color: var(--muted); border: 1.5px solid var(--border); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
     .btn-ghost:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
-    .btn-white { background: #fff; color: var(--primary-dark); font-weight: 700; }
+    .btn-white { background: #fff; color: var(--primary-dark); font-weight: 600; }
     .btn-white:hover:not(:disabled) { background: var(--primary-light); }
 
-    .upload-actions { margin-top: 1.75rem; display: flex; justify-content: center; gap: 1rem; }
-    .upload-actions .btn { min-width: 180px; justify-content: center; padding: .9rem 2rem; font-size: 1rem; }
+    .upload-actions { margin-top: 1.25rem; display: flex; justify-content: center; }
+    .upload-actions .btn { padding: .75rem 2.5rem; font-size: .9rem; width: 100%; justify-content: center; }
 
     /* Spinner */
     .spin-wrap { display: none; padding: 1.5rem; text-align: center; }
@@ -338,27 +325,27 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      box-shadow: var(--shadow-md);
-      padding: 1.75rem 2rem;
-      margin-bottom: 1.5rem;
+      box-shadow: var(--shadow);
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
     }
-    .search-banner h2 { font-size: 1.2rem; font-weight: 800; margin-bottom: .2rem; color: var(--text); letter-spacing: -.03em; }
-    .search-banner p  { color: var(--muted); font-size: .82rem; margin: 0; }
-    .search-banner-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-bottom: 1.1rem; }
-    .search-status-wrap { display: flex; align-items: center; gap: .45rem; }
-    .search-row { display: flex; gap: .65rem; }
+    .search-banner h2 { font-size: 1.05rem; font-weight: 700; margin-bottom: .15rem; color: var(--text); letter-spacing: -.02em; }
+    .search-banner p  { color: var(--muted); font-size: .8rem; margin: 0; }
+    .search-banner-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
+    .search-status-wrap { display: flex; align-items: center; gap: .4rem; }
+    .search-row { display: flex; gap: .5rem; }
     .search-input {
       flex: 1;
-      padding: .8rem 1.1rem;
-      border: 1.5px solid var(--border);
+      padding: .7rem 1rem;
+      border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      font-size: .93rem;
+      font-size: .9rem;
       outline: none;
       background: var(--surface-2);
       color: var(--text);
       transition: border-color .15s, box-shadow .15s;
     }
-    .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(108,99,255,.12); background: #fff; }
+    .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,91,214,.1); background: #fff; }
     @media (max-width: 480px) { .search-row { flex-direction: column; } }
 
     /* ─────── Job Results ─────── */
@@ -373,26 +360,26 @@
     }
 
     /* Country selector */
-    .country-row { display: flex; gap: .45rem; margin-bottom: .85rem; flex-wrap: wrap; }
+    .country-row { display: flex; gap: .35rem; margin-bottom: .75rem; flex-wrap: wrap; }
     .country-btn {
-      padding: .35rem 1rem; border-radius: 999px; font-size: .82rem; font-weight: 600;
-      cursor: pointer; border: 1.5px solid var(--border);
-      background: var(--surface); color: var(--text);
-      transition: all .15s;
+      padding: .3rem .85rem; border-radius: 6px; font-size: .8rem; font-weight: 500;
+      cursor: pointer; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted);
+      transition: all .12s;
     }
-    .country-btn:hover { border-color: var(--primary); background: var(--primary-light); }
+    .country-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
     .country-btn.active {
       border-color: var(--primary); background: var(--primary);
-      color: #fff; box-shadow: 0 2px 8px rgba(108,99,255,.25);
+      color: #fff;
     }
 
-    .filter-row { display: flex; gap: .45rem; margin-bottom: 1.1rem; flex-wrap: wrap; align-items: center; }
-    .filter-sep { width: 1px; height: 18px; background: var(--border); margin: 0 .2rem; }
+    .filter-row { display: flex; gap: .3rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .filter-sep { width: 1px; height: 16px; background: var(--border); margin: 0 .15rem; }
     .filter-btn {
-      padding: .3rem .85rem; border-radius: 999px; font-size: .76rem; font-weight: 600;
-      cursor: pointer; border: 1.5px solid var(--border);
-      background: var(--surface); color: var(--muted);
-      transition: all .15s;
+      padding: .25rem .7rem; border-radius: 6px; font-size: .75rem; font-weight: 500;
+      cursor: pointer; border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      transition: all .12s;
     }
     .filter-btn:hover { border-color: var(--primary); color: var(--primary); }
     .filter-btn.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary-dark); }
@@ -407,31 +394,26 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 1.4rem;
-      display: flex; flex-direction: column; gap: .5rem;
-      transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+      padding: 1.25rem;
+      display: flex; flex-direction: column; gap: .45rem;
+      transition: border-color .15s, box-shadow .15s;
       position: relative;
       overflow: hidden;
     }
     .job-card:hover {
-      transform: translateY(-3px);
-      box-shadow: var(--shadow-lg);
-      border-color: rgba(108,99,255,.3);
+      border-color: #c7c6ef;
+      box-shadow: var(--shadow-md);
     }
-    .job-card.best-match {
-      border-color: rgba(16,185,129,.4);
-      box-shadow: 0 0 0 2px rgba(16,185,129,.12), var(--shadow-md);
-    }
+    .job-card.best-match { border-color: #86efac; }
 
     .best-match-ribbon {
       position: absolute; top: 0; right: 0;
-      background: linear-gradient(135deg, #10b981, #059669);
+      background: var(--success);
       color: #fff;
-      font-size: .6rem; font-weight: 800;
-      padding: .25rem .75rem;
+      font-size: .6rem; font-weight: 700;
+      padding: .2rem .65rem;
       border-radius: 0 var(--radius) 0 var(--radius-sm);
-      text-transform: uppercase; letter-spacing: .08em;
+      text-transform: uppercase; letter-spacing: .06em;
     }
 
     .jc-match-row { display: flex; align-items: center; gap: .5rem; margin-top: .1rem; }
@@ -663,22 +645,21 @@
 
     .jc-footer { margin-top: auto; padding-top: .75rem; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
     .apply-btn {
-      flex: 1; text-align: center; padding: .6rem;
-      background: var(--primary-grad); color: #fff; border-radius: var(--radius-sm);
-      font-size: .84rem; font-weight: 700; text-decoration: none;
-      transition: all .18s ease;
-      box-shadow: 0 2px 8px rgba(108,99,255,.25);
+      flex: 1; text-align: center; padding: .55rem;
+      background: var(--primary); color: #fff; border-radius: var(--radius-sm);
+      font-size: .82rem; font-weight: 600; text-decoration: none;
+      transition: opacity .12s;
     }
-    .apply-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(108,99,255,.4); }
+    .apply-btn:hover { opacity: .88; }
     .save-btn {
-      padding: .45rem .9rem; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--surface); color: var(--muted); font-size: .8rem; font-weight: 600;
-      cursor: pointer; transition: all .15s;
+      padding: .4rem .8rem; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: transparent; color: var(--muted); font-size: .78rem; font-weight: 500;
+      cursor: pointer; transition: all .12s;
     }
     .save-btn:hover { border-color: var(--primary); color: var(--primary); }
     .save-btn.saved { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
     .applied-badge {
-      font-size: .72rem; font-weight: 700; padding: .2rem .55rem;
+      font-size: .7rem; font-weight: 600; padding: .18rem .5rem;
       background: var(--success-light); color: var(--success); border-radius: 999px;
     }
 
@@ -703,9 +684,7 @@
     .fade-in { animation: fadeUp .4s ease both; }
 
     .scrape-notice {
-      font-size: .77rem; color: var(--muted); text-align: center; margin-top: .75rem;
-      padding: .55rem; background: var(--warning-light);
-      border: 1px solid #f0c08a; border-radius: var(--radius-sm);
+      font-size: .75rem; color: var(--muted); text-align: center; margin-top: .75rem;
     }
   </style>
 </head>
@@ -722,8 +701,7 @@
     CV Analyzer &amp; Job Finder
   </div>
   <div class="header-right">
-    <span class="header-tagline">ATS scoring · Domain intelligence · Live job search</span>
-    <a href="/payments" style="font-size:.85rem;font-weight:700;color:var(--primary-dark);text-decoration:none;white-space:nowrap">Payment Tracker &rarr;</a>
+    <span class="header-tagline">ATS scoring · Domain intelligence · Job search</span>
   </div>
 </header>
 
@@ -736,22 +714,10 @@
       <p class="upload-sub">Upload your CV and get an instant ATS score, domain intelligence, and matched job listings tailored to your profile.</p>
 
       <div class="upload-features">
-        <span class="upload-feature-pill">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-          ATS Score
-        </span>
-        <span class="upload-feature-pill">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-          Domain Intelligence
-        </span>
-        <span class="upload-feature-pill">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          Matched Jobs
-        </span>
-        <span class="upload-feature-pill">
-          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          JD Match Check
-        </span>
+        <span class="upload-feature-pill">✦ ATS Score</span>
+        <span class="upload-feature-pill">✦ Domain Intelligence</span>
+        <span class="upload-feature-pill">✦ Matched Jobs</span>
+        <span class="upload-feature-pill">✦ JD Match</span>
       </div>
 
       <div class="drop-zone" id="drop-zone">

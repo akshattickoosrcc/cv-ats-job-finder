@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +9,19 @@ import os
 _data_dir = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent)))
 DB_PATH = _data_dir / "jobs.db"
 _local = threading.local()
+
+
+def _retry_locked(fn, retries: int = 5, base_delay: float = 0.2):
+    """Retries a write on 'database is locked' — the background job scraper
+    holds long write transactions on the same sqlite file."""
+    for attempt in range(retries):
+        try:
+            return fn()
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < retries - 1:
+                time.sleep(base_delay * (attempt + 1))
+                continue
+            raise
 
 
 def _conn():
@@ -57,6 +71,23 @@ def init_db():
             cv_keywords TEXT,
             reviewed_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS transactions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount      REAL    NOT NULL,
+            direction   TEXT    NOT NULL,
+            merchant    TEXT,
+            vpa         TEXT,
+            bank        TEXT,
+            method      TEXT,
+            category    TEXT    NOT NULL,
+            txn_time    TEXT    NOT NULL,
+            raw_sms     TEXT,
+            sms_hash    TEXT    UNIQUE,
+            created_at  TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_txn_time     ON transactions(txn_time);
+        CREATE INDEX IF NOT EXISTS idx_txn_category ON transactions(category);
     """)
     c.commit()
 
@@ -203,3 +234,103 @@ def clear_old_jobs(keep_days: int = 2):
         (f"-{keep_days} days",),
     )
     c.commit()
+
+
+# ───────────────────────── Payment tracker ───────────────────────
+
+def save_transaction(txn: dict) -> bool:
+    """Insert a parsed transaction. Returns False if it's a duplicate (same sms_hash)."""
+    c = _conn()
+
+    def _do():
+        c.execute(
+            "INSERT INTO transactions "
+            "(amount, direction, merchant, vpa, bank, method, category, txn_time, raw_sms, sms_hash, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                txn["amount"],
+                txn["direction"],
+                txn.get("merchant"),
+                txn.get("vpa"),
+                txn.get("bank"),
+                txn.get("method"),
+                txn["category"],
+                txn["txn_time"],
+                txn.get("raw_sms"),
+                txn.get("sms_hash"),
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        c.commit()
+
+    try:
+        _retry_locked(_do)
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def get_transactions(month: str = None, category: str = None, limit: int = 1000) -> list[dict]:
+    c = _conn()
+    sql = "SELECT * FROM transactions"
+    clauses, params = [], []
+    if month:
+        clauses.append("strftime('%Y-%m', txn_time) = ?")
+        params.append(month)
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY txn_time DESC LIMIT ?"
+    params.append(limit)
+    rows = c.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_monthly_summary(month: str) -> dict:
+    c = _conn()
+    rows = c.execute(
+        "SELECT category, SUM(amount) AS total, COUNT(*) AS cnt "
+        "FROM transactions WHERE strftime('%Y-%m', txn_time) = ? AND direction = 'debit' "
+        "GROUP BY category ORDER BY total DESC",
+        (month,),
+    ).fetchall()
+    categories = [dict(r) for r in rows]
+    total_debit = sum(r["total"] for r in categories)
+    total_credit = c.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM transactions "
+        "WHERE strftime('%Y-%m', txn_time) = ? AND direction = 'credit'",
+        (month,),
+    ).fetchone()[0]
+    return {
+        "month": month,
+        "categories": categories,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "txn_count": sum(r["cnt"] for r in categories),
+    }
+
+
+def update_transaction_category(txn_id: int, category: str):
+    c = _conn()
+    _retry_locked(lambda: (
+        c.execute("UPDATE transactions SET category = ? WHERE id = ?", (category, txn_id)),
+        c.commit(),
+    ))
+
+
+def delete_transaction(txn_id: int):
+    c = _conn()
+    _retry_locked(lambda: (
+        c.execute("DELETE FROM transactions WHERE id = ?", (txn_id,)),
+        c.commit(),
+    ))
+
+
+def available_months() -> list[str]:
+    c = _conn()
+    rows = c.execute(
+        "SELECT DISTINCT strftime('%Y-%m', txn_time) AS m FROM transactions ORDER BY m DESC"
+    ).fetchall()
+    return [r["m"] for r in rows if r["m"]]
