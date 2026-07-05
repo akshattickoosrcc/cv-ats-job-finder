@@ -1,7 +1,7 @@
 import os
 
 # Free tier = 512MB RAM. 2 gevent workers is the safe max.
-workers          = int(os.environ.get("WEB_CONCURRENCY", 2))
+workers          = int(os.environ.get("WEB_CONCURRENCY", 1))
 worker_class     = "gevent"
 worker_connections = 100
 timeout          = 120

@@ -11,7 +11,7 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: WEB_CONCURRENCY
-        value: 2
+        value: 1
       - key: RENDER_EXTERNAL_URL
         value: https://job-finder-2fr1.onrender.com
       - key: RENDER

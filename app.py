@@ -14,7 +14,11 @@ from flask_limiter.util import get_remote_address
 
 import db
 import payments
-import scrapers
+
+# Lazy-load scrapers — BeautifulSoup/lxml/requests are heavy; don't load at boot
+def _scrapers():
+    import scrapers as _s
+    return _s
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
@@ -986,22 +990,22 @@ def search_jobs_route():
         base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
         # For non-India countries, also include any already-scraped international jobs
         if country != "in":
-            base_jobs = [j for j in base_jobs if scrapers.detect_country(j.get("location", "")) == country]
+            base_jobs = [j for j in base_jobs if _scrapers().detect_country(j.get("location", "")) == country]
 
         live_jobs: list[dict] = []
         if len(base_jobs) < 15:
-            live_jobs = scrapers.scrape_live(field, country=country)
+            live_jobs = _scrapers().scrape_live(field, country=country)
             db.save_jobs(live_jobs)
             base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
             if country != "in":
-                base_jobs = [j for j in base_jobs if scrapers.detect_country(j.get("location", "")) == country]
+                base_jobs = [j for j in base_jobs if _scrapers().detect_country(j.get("location", "")) == country]
         with _job_cache_lock:
             _job_cache[cache_key] = base_jobs
 
     jobs = []
     for job in base_jobs:
         j = dict(job)
-        j["country"]  = scrapers.detect_country(j.get("location", ""))
+        j["country"]  = _scrapers().detect_country(j.get("location", ""))
         j["match_score"], j["matched_keywords"] = score_job(j, cv_keywords)
         jobs.append(j)
 
@@ -1035,7 +1039,7 @@ def match_jd_route():
 def scrape_status():
     last = db.get_last_scrape()
     return jsonify({
-        "running":    scrapers.is_scrape_running(),
+        "running":    _scrapers().is_scrape_running(),
         "total_jobs": db.total_jobs(),
         "last_scrape": last,
     })
@@ -1043,9 +1047,9 @@ def scrape_status():
 
 @app.route("/api/scrape-now", methods=["POST"])
 def scrape_now():
-    if scrapers.is_scrape_running():
+    if _scrapers().is_scrape_running():
         return jsonify({"message": "Scrape already in progress"}), 202
-    threading.Thread(target=scrapers.run_full_scrape, daemon=True).start()
+    threading.Thread(target=_scrapers().run_full_scrape, daemon=True).start()
     return jsonify({"message": "Full scrape started in background"})
 
 
@@ -1064,7 +1068,7 @@ def _ping_self():
 def _start_scheduler():
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
-        scrapers.run_full_scrape,
+        _scrapers().run_full_scrape,
         trigger="interval",
         hours=24,
         id="daily_scrape",
@@ -1081,7 +1085,7 @@ def _start_scheduler():
     # Only run initial scrape locally — on Render the scheduler handles it at 24h intervals
     # to avoid OOM crash on 512MB free tier during startup
     if not os.environ.get("RENDER"):
-        threading.Thread(target=scrapers.run_full_scrape, daemon=True).start()
+        threading.Thread(target=_scrapers().run_full_scrape, daemon=True).start()
 
 
 @app.route("/api/ping")
