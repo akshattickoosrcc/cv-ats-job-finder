@@ -934,14 +934,15 @@ def search_jobs_route():
         if len(base_jobs) < 30:
             live_jobs = sc.scrape_live(field, country=country)
             db.save_jobs(live_jobs)
-            base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
-            if country != "in":
-                base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
+            # Merge live results directly — don't re-query DB which loses relevant live jobs
+            seen_links = {j.get("link") for j in base_jobs}
+            base_jobs = base_jobs + [j for j in live_jobs if j.get("link") not in seen_links]
 
-        # Fallback: if country-specific scrape failed (blocked IPs etc.), show remote jobs
+        # Fallback: country-specific scrape blocked → show remote jobs
         if len(base_jobs) == 0 and country not in ("in", "remote"):
-            base_jobs = sc.scrape_live(field, country="remote")
-            db.save_jobs(base_jobs)
+            remote_jobs = sc.scrape_live(field, country="remote")
+            db.save_jobs(remote_jobs)
+            base_jobs = remote_jobs
 
         with _job_cache_lock:
             _job_cache[cache_key] = base_jobs

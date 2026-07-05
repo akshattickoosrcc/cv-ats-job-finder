@@ -909,27 +909,85 @@ def run_full_scrape():
         _SCRAPE_RUNNING = False
 
 
-def scrape_live(query: str, country: str = "in") -> list[dict]:
-    """Quick live scrape — routes to the right source based on country."""
-    all_jobs: list[dict] = []
-    if country == "uk":
-        sources = [scrape_reed_uk, scrape_linkedin_uk, scrape_glassdoor]
-    elif country == "us":
-        sources = [scrape_linkedin_us, scrape_indeed, scrape_glassdoor, scrape_wellfound]
-    elif country == "au":
-        sources = [scrape_seek_au, scrape_linkedin]
-    elif country == "eu":
-        sources = [scrape_linkedin_eu, scrape_glassdoor]
-    elif country == "remote":
-        sources = [scrape_remoteok, scrape_wwr, scrape_wellfound, scrape_linkedin]
-    else:  # "in" or default
-        sources = [scrape_naukri, scrape_internshala, scrape_timesjobs, scrape_shine, scrape_foundit, scrape_linkedin_india]
+def _greenhouse_search(query: str) -> list[dict]:
+    """Search all cached Greenhouse India jobs by query words."""
+    q_words = query.lower().split()
+    results = []
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        futs = {ex.submit(scrape_greenhouse, c, True): c for c in GREENHOUSE_COMPANIES}
+        for fut in as_completed(futs):
+            for job in fut.result():
+                if any(w in job["title"].lower() for w in q_words):
+                    results.append(job)
+    return results
 
-    with ThreadPoolExecutor(max_workers=12) as ex:
-        futs = {ex.submit(fn, query): fn.__name__ for fn in sources}
+
+def _filter_by_query(jobs: list[dict], query: str) -> list[dict]:
+    """Keep only jobs where at least one query word appears in the title."""
+    q_words = [w for w in query.lower().split() if len(w) > 2]
+    if not q_words:
+        return jobs
+    return [j for j in jobs if any(w in j.get("title", "").lower() for w in q_words)]
+
+
+def scrape_live(query: str, country: str = "in") -> list[dict]:
+    """
+    Live scrape for a query. Always includes reliable API sources (RemoteOK,
+    WWR, Remotive, Jobicy) plus country-specific sources. All results are
+    filtered to only include jobs relevant to the query.
+    If fewer than 5 results, retries with a broader 2-word version of the query.
+    """
+    # Reliable API-based sources — work for all countries
+    api_sources = [scrape_remoteok, scrape_wwr]
+
+    if country == "uk":
+        html_sources = [scrape_reed_uk, scrape_linkedin_uk]
+    elif country == "us":
+        html_sources = [scrape_indeed, scrape_wellfound]
+    elif country == "au":
+        html_sources = [scrape_seek_au]
+    elif country == "eu":
+        html_sources = [scrape_linkedin_eu]
+    elif country == "remote":
+        html_sources = [scrape_wellfound]
+    else:  # "in" or default
+        html_sources = [scrape_internshala, scrape_shine]
+
+    all_sources = api_sources + html_sources
+
+    raw_jobs: list[dict] = []
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futs = {ex.submit(fn, query): fn for fn in all_sources}
+        # Also search Greenhouse India jobs (most reliable real India jobs)
+        gh_fut = ex.submit(_greenhouse_search, query)
         for fut in as_completed(futs):
             try:
-                all_jobs.extend(fut.result(timeout=18))
+                raw_jobs.extend(fut.result(timeout=18))
             except Exception:
                 pass
-    return all_jobs
+        try:
+            raw_jobs.extend(gh_fut.result(timeout=25))
+        except Exception:
+            pass
+
+    # Filter to only jobs relevant to the query
+    jobs = _filter_by_query(raw_jobs, query)
+
+    # Broaden search if too few results: retry with first 2 meaningful words
+    if len(jobs) < 5:
+        words = [w for w in query.lower().split() if len(w) > 2]
+        broad_query = " ".join(words[:2]) if len(words) >= 2 else words[0] if words else query
+        if broad_query != query.lower():
+            broad_raw: list[dict] = []
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                futs = {ex.submit(fn, broad_query): fn for fn in api_sources}
+                for fut in as_completed(futs):
+                    try:
+                        broad_raw.extend(fut.result(timeout=18))
+                    except Exception:
+                        pass
+            broad_filtered = _filter_by_query(broad_raw, broad_query)
+            seen = {j["link"] for j in jobs}
+            jobs += [j for j in broad_filtered if j.get("link") not in seen]
+
+    return jobs
