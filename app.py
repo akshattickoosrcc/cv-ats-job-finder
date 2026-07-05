@@ -4,6 +4,7 @@ import re
 import threading
 from datetime import datetime, timezone
 
+import requests as _requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from cachetools import TTLCache
 from flask import Flask, jsonify, render_template, request
@@ -32,7 +33,7 @@ limiter = Limiter(
 
 # ── In-process caches ─────────────────────────────────────────────
 _cv_store: dict   = {}                     # per-worker CV text store
-_job_cache        = TTLCache(maxsize=512, ttl=120)   # cache job searches 2 min
+_job_cache        = TTLCache(maxsize=64, ttl=120)    # cache job searches 2 min
 _job_cache_lock   = threading.Lock()
 
 # ─────────────────────── ATS keyword data ────────────────────────
@@ -971,6 +972,11 @@ def scrape_status():
 
 @app.route("/api/scrape-now", methods=["POST"])
 def scrape_now():
+    # Require secret key to prevent unauthenticated scrape triggers (OOM DoS vector)
+    body = request.get_json(silent=True, force=True) or {}
+    token = request.headers.get("X-Admin-Token") or body.get("token", "")
+    if token != app.secret_key:
+        return jsonify({"error": "Unauthorized"}), 403
     if _scrapers().is_scrape_running():
         return jsonify({"message": "Scrape already in progress"}), 202
     threading.Thread(target=_scrapers().run_full_scrape, daemon=True).start()
@@ -984,7 +990,7 @@ def _ping_self():
     try:
         render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
         if render_url:
-            requests.get(f"{render_url}/api/ping", timeout=10)
+            _requests.get(f"{render_url}/api/ping", timeout=10)
     except Exception:
         pass
 
@@ -1010,12 +1016,15 @@ def _start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    # Run initial scrape after 30s on all environments so DB is populated
-    def _delayed():
-        import time as _t
-        _t.sleep(30)
-        _run_scrape()
-    threading.Thread(target=_delayed, daemon=True).start()
+    # On Render free tier, skip the startup scrape — DB persists between deploys
+    # and the 6h scheduled scrape will keep it fresh. Startup scrape on 512MB RAM
+    # causes OOM during the import+scrape spike.
+    if not os.environ.get("RENDER"):
+        def _delayed():
+            import time as _t
+            _t.sleep(30)
+            _run_scrape()
+        threading.Thread(target=_delayed, daemon=True).start()
 
 
 @app.route("/api/ping")

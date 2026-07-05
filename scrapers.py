@@ -867,29 +867,31 @@ def run_full_scrape():
         total_saved += n
         print(f"[Scraper] Global boards: {len(board_jobs)} fetched, {n} new saved")
 
-        # ── International boards (UK / US / EU / AU) ──
-        INTL_TERMS = [
-            "software engineer", "data scientist", "product manager", "data engineer",
-            "machine learning engineer", "frontend developer", "backend developer",
-            "full stack developer", "devops engineer", "cloud engineer",
-        ]
-        def scrape_intl_for_term(term):
-            results = []
-            for fn in [scrape_reed_uk, scrape_linkedin_uk, scrape_linkedin_us, scrape_seek_au, scrape_linkedin_eu]:
-                try:
-                    results.extend(fn(term))
-                    time.sleep(0.4)
-                except Exception:
-                    pass
-            return results
+        # ── International boards (UK / US / EU / AU) — skip on Render free tier ──
+        import os as _os
+        if not _os.environ.get("RENDER"):
+            INTL_TERMS = [
+                "software engineer", "data scientist", "product manager", "data engineer",
+                "machine learning engineer", "frontend developer", "backend developer",
+                "full stack developer", "devops engineer", "cloud engineer",
+            ]
+            def scrape_intl_for_term(term):
+                results = []
+                for fn in [scrape_reed_uk, scrape_linkedin_uk, scrape_linkedin_us, scrape_seek_au, scrape_linkedin_eu]:
+                    try:
+                        results.extend(fn(term))
+                        time.sleep(0.4)
+                    except Exception:
+                        pass
+                return results
 
-        intl_jobs: list[dict] = []
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            futs = [ex.submit(scrape_intl_for_term, t) for t in INTL_TERMS]
-            for fut in as_completed(futs):
-                intl_jobs.extend(fut.result())
-        n = db.save_jobs(intl_jobs)
-        total_saved += n
+            intl_jobs: list[dict] = []
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                futs = [ex.submit(scrape_intl_for_term, t) for t in INTL_TERMS]
+                for fut in as_completed(futs):
+                    intl_jobs.extend(fut.result())
+            n = db.save_jobs(intl_jobs)
+            total_saved += n
         print(f"[Scraper] International (UK/US/EU/AU): {len(intl_jobs)} fetched, {n} new saved")
 
         db.finish_scrape_log(log_id, total_saved, "done")
