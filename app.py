@@ -1078,8 +1078,12 @@ def _start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    # Initial scrape on startup (non-blocking)
-    threading.Thread(target=scrapers.run_full_scrape, daemon=True).start()
+    # Delay initial scrape 60s so gunicorn finishes binding before heavy work
+    def _delayed_scrape():
+        import time as _time
+        _time.sleep(60)
+        scrapers.run_full_scrape()
+    threading.Thread(target=_delayed_scrape, daemon=True).start()
 
 
 @app.route("/api/ping")
