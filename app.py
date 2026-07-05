@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import requests as _requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from cachetools import TTLCache
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
@@ -32,7 +32,6 @@ limiter = Limiter(
 )
 
 # ── In-process caches ─────────────────────────────────────────────
-_cv_store: dict   = {}                     # per-worker CV text store
 _job_cache        = TTLCache(maxsize=64, ttl=120)    # cache job searches 2 min
 _job_cache_lock   = threading.Lock()
 
@@ -824,6 +823,22 @@ def score_job(job, cv_keywords):
 
 # ─────────────────────── Routes ──────────────────────────────────
 
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self';"
+    )
+    return response
+
+
 @app.errorhandler(429)
 def too_many_requests(e):
     return jsonify({"error": "Too many requests — please wait a moment and try again"}), 429
@@ -873,9 +888,9 @@ def analyze_cv_route():
         # Smart job recommendation
         result["recommendation"] = derive_recommended_query(text, cv_keywords)
 
-        # Cache CV text for JD matching
-        _cv_store["text"]     = text
-        _cv_store["keywords"] = cv_keywords
+        # Cache CV text for JD matching — stored in signed session cookie (per-user)
+        session["cv_text"]     = text
+        session["cv_keywords"] = cv_keywords
 
         # Persist this review as the new baseline
         db.save_ats_review(
@@ -884,7 +899,8 @@ def analyze_cv_route():
         )
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": f"Error processing CV: {e}"}), 500
+        app.logger.error("CV analysis error: %s", e, exc_info=True)
+        return jsonify({"error": "CV processing failed — please try again"}), 500
 
 
 @app.route("/api/search-jobs", methods=["POST"])
@@ -897,7 +913,14 @@ def search_jobs_route():
     if not field:
         return jsonify({"error": "Please enter a job field"}), 400
 
-    country       = (data.get("country") or "in").strip().lower()
+    if len(field) > 200:
+        return jsonify({"error": "Search field too long"}), 400
+
+    _VALID_COUNTRIES = {"in", "us", "uk", "eu", "au", "remote"}
+    country = (data.get("country") or "in").strip().lower()
+    if country not in _VALID_COUNTRIES:
+        country = "in"
+
     cache_key     = f"{field.lower()}|{source_filter.lower()}|{country}"
     with _job_cache_lock:
         base_jobs = _job_cache.get(cache_key)
@@ -952,8 +975,8 @@ def match_jd_route():
     jd_text = (data.get("jd_text") or "").strip()
     if not jd_text:
         return jsonify({"error": "Paste a job description first"}), 400
-    cv_text = _cv_store.get("text", "")
-    cv_kws  = _cv_store.get("keywords", [])
+    cv_text = session.get("cv_text", "")
+    cv_kws  = session.get("cv_keywords", [])
     if not cv_text:
         return jsonify({"error": "Upload and analyze your CV first"}), 400
     result = match_jd(cv_text, jd_text, cv_kws)
