@@ -721,7 +721,10 @@
     </div>
     CV Analyzer &amp; Job Finder
   </div>
-  <span class="header-tagline">ATS scoring · Domain intelligence · Live job search</span>
+  <div class="header-right">
+    <span class="header-tagline">ATS scoring · Domain intelligence · Live job search</span>
+    <a href="/payments" style="font-size:.85rem;font-weight:700;color:var(--primary-dark);text-decoration:none;white-space:nowrap">Payment Tracker &rarr;</a>
+  </div>
 </header>
 
 <main>
@@ -1181,7 +1184,7 @@ analyzeBtn.addEventListener('click', async () => {
     pollStatus();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch(e) {
-    toast('Could not reach server — open http://localhost:5001 in your browser', 'error');
+    toast('Could not reach server — please refresh the page and try again', 'error');
   } finally {
     analyzeBtn.disabled = false;
     uploadSpin.classList.remove('on');
