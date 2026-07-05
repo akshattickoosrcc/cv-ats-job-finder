@@ -27,7 +27,7 @@ def _h(json_req=False):
     h = {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Connection": "keep-alive",
     }
     if json_req:
@@ -182,28 +182,44 @@ def scrape_wellfound(query: str) -> list[dict]:
 def scrape_remoteok(query: str) -> list[dict]:
     jobs = []
     try:
-        encoded = urllib.parse.quote_plus(query.replace(" ", "-"))
-        url = f"https://remoteok.com/remote-{encoded}-jobs"
-        r = requests.get(url, headers=_h(), timeout=14)
-        if r.status_code != 200:
-            return []
-        soup = BeautifulSoup(r.text, "lxml")
-        rows = soup.select("tr.job")
-        for row in rows[:12]:
-            title_el   = row.select_one("h2[itemprop='title']") or row.select_one(".position h2")
-            company_el = row.select_one("h3[itemprop='name']") or row.select_one(".company")
-            loc_el     = row.select_one("div.location") or row.select_one("[class*='location']")
-            link_el    = row.get("data-url") or ""
-            if not title_el:
-                continue
-            link = f"https://remoteok.com{link_el}" if link_el.startswith("/") else link_el or "https://remoteok.com"
-            jobs.append({
-                "title":    title_el.get_text(strip=True),
-                "company":  company_el.get_text(strip=True) if company_el else "Company",
-                "location": loc_el.get_text(strip=True) if loc_el else "Remote",
-                "link":     link,
-                "source":   "RemoteOK",
-            })
+        import json as _json
+
+        def _parse(data: list, strict: bool = False) -> list[dict]:
+            out = []
+            q_words = query.lower().split()
+            threshold = len(q_words) if strict else 1
+            for item in data:
+                if not isinstance(item, dict) or not item.get("position"):
+                    continue
+                title_l = item.get("position", "").lower()
+                matches = sum(1 for w in q_words if w in title_l)
+                if matches < threshold:
+                    continue
+                slug = item.get("slug", "")
+                out.append({
+                    "title":    item.get("position", ""),
+                    "company":  item.get("company", "Company"),
+                    "location": "Remote",
+                    "link":     f"https://remoteok.com/remote-jobs/{slug}" if slug else "https://remoteok.com",
+                    "source":   "RemoteOK",
+                })
+                if len(out) >= 15:
+                    break
+            return out
+
+        # Try tag-based API first (faster, server-filtered)
+        q_words = query.lower().split()
+        use_strict = len(q_words) >= 2
+        tags = ",".join(q_words)
+        r = requests.get(f"https://remoteok.com/api?&tags={tags}", headers=_h(json_req=True), timeout=14)
+        if r.status_code == 200:
+            jobs = _parse(_json.loads(r.text), strict=use_strict)
+
+        # Fall back to full API with stricter client-side title filter
+        if not jobs:
+            r = requests.get("https://remoteok.com/api", headers=_h(json_req=True), timeout=14)
+            if r.status_code == 200:
+                jobs = _parse(_json.loads(r.text), strict=True)
     except Exception as e:
         print(f"[RemoteOK] {e}")
     return jobs
@@ -220,18 +236,26 @@ def scrape_wwr(query: str) -> list[dict]:
         if r.status_code != 200:
             return []
         soup = BeautifulSoup(r.text, "lxml")
-        items = soup.select("li.feature") or soup.select("article.job")
+        items = soup.select("li.feature, li.new-listing-container")
         for item in items[:12]:
-            title_el   = item.select_one("span.title") or item.select_one("h4")
-            company_el = item.select_one("span.company") or item.select_one("h3")
+            title_el   = (item.select_one("span[class*='title__text']") or
+                          item.select_one("span.title") or item.select_one("h4"))
+            company_el = (item.select_one("span[class*='company']") or
+                          item.select_one("div[class*='company']"))
             link_el    = item.select_one("a[href*='/remote-jobs/']")
             if not title_el:
                 continue
             href = link_el.get("href", "") if link_el else ""
             link = f"https://weworkremotely.com{href}" if href.startswith("/") else href or "https://weworkremotely.com"
+            # company often in tooltip alt text
+            if not company_el:
+                img = item.select_one("div[alt]")
+                company_name = img.get("alt", "Company").split(" is hiring")[0] if img else "Company"
+            else:
+                company_name = company_el.get_text(strip=True)
             jobs.append({
                 "title":    title_el.get_text(strip=True),
-                "company":  company_el.get_text(strip=True) if company_el else "Company",
+                "company":  company_name,
                 "location": "Remote",
                 "link":     link,
                 "source":   "WeWorkRemotely",
@@ -293,47 +317,32 @@ def detect_country(loc: str) -> str:
 def scrape_naukri(query: str) -> list[dict]:
     jobs = []
     try:
-        slug = query.lower().replace(" ", "-")
-        url  = f"https://www.naukri.com/{slug}-jobs"
-        r = requests.get(url, headers=_h(), timeout=14)
+        import json as _json
+        encoded = urllib.parse.quote_plus(query)
+        url = (
+            f"https://www.naukri.com/jobapi/v3/search"
+            f"?noOfResults=20&urlType=search_by_keyword&searchType=adv"
+            f"&keyword={encoded}&sort=r&seoKey={encoded.replace('+','-')}-jobs"
+            f"&src=jobsearchDesk&latLong="
+        )
+        headers = {
+            **_h(json_req=True),
+            "appid": "109",
+            "systemid": "Naukri",
+            "Referer": "https://www.naukri.com/",
+        }
+        r = requests.get(url, headers=headers, timeout=14)
         if r.status_code != 200:
             return []
-        soup  = BeautifulSoup(r.text, "lxml")
-        cards = (
-            soup.select("article.jobTuple") or
-            soup.select("[class*='jobTuple']") or
-            soup.select("[class*='job-tuple']")
-        )
-        for script in soup.find_all("script", type="application/ld+json"):
-            try:
-                import json as _json
-                data = _json.loads(script.string or "")
-                items = data if isinstance(data, list) else [data]
-                for item in items:
-                    if isinstance(item, dict) and item.get("@type") == "JobPosting":
-                        loc = item.get("jobLocation", {})
-                        addr = loc.get("address", {}) if isinstance(loc, dict) else {}
-                        jobs.append({
-                            "title":    item.get("title", "Job"),
-                            "company":  item.get("hiringOrganization", {}).get("name", "Company"),
-                            "location": addr.get("addressLocality", "India"),
-                            "link":     item.get("url", url),
-                            "source":   "Naukri",
-                        })
-            except Exception:
-                pass
-        for card in cards[:12]:
-            title_el   = card.select_one("a.title") or card.select_one("[class*='title'] a") or card.select_one("a[title]")
-            company_el = card.select_one("a.subTitle") or card.select_one("[class*='company']")
-            loc_el     = card.select_one("li.location") or card.select_one("[class*='location']")
-            if title_el:
-                jobs.append({
-                    "title":    title_el.get("title") or title_el.get_text(strip=True),
-                    "company":  company_el.get_text(strip=True) if company_el else "Company",
-                    "location": loc_el.get_text(strip=True) if loc_el else "India",
-                    "link":     title_el.get("href", url),
-                    "source":   "Naukri",
-                })
+        data = _json.loads(r.text)
+        for item in (data.get("jobDetails") or [])[:20]:
+            title   = item.get("title", "")
+            company = (item.get("companyName") or "Company").strip()
+            loc     = ", ".join(item.get("placeholders", [{}])[0].get("label", "India").split(",")[:2]) if item.get("placeholders") else "India"
+            link    = item.get("jdURL") or item.get("jobId") or ""
+            if not link.startswith("http"):
+                link = f"https://www.naukri.com{link}"
+            jobs.append({"title": title, "company": company, "location": loc, "link": link, "source": "Naukri"})
     except Exception as e:
         print(f"[Naukri] {e}")
     return jobs
@@ -412,14 +421,16 @@ def scrape_shine(query: str) -> list[dict]:
         if r.status_code != 200:
             return []
         soup  = BeautifulSoup(r.text, "lxml")
-        cards = soup.select("div.jobCard") or soup.select("[class*='job-card']") or soup.select("article.job")
+        cards = soup.select("[class*='jobCard']") or soup.select("[class*='job-card']")
         for card in cards[:12]:
-            title_el   = card.select_one("h3 a") or card.select_one(".job-title a")
-            company_el = card.select_one("[class*='company']") or card.select_one("p.company")
-            loc_el     = card.select_one("[class*='location']") or card.select_one("span.location")
+            # Shine uses itemprop microdata
+            url_meta   = card.select_one("meta[itemprop='url']")
+            title_el   = card.select_one("h3[itemprop='name']") or card.select_one("h3")
+            company_el = card.select_one("[class*='company']") or card.select_one("[itemprop='hiringOrganization']")
+            loc_el     = card.select_one("[class*='location']") or card.select_one("[itemprop='addressLocality']")
             if title_el:
-                href = title_el.get("href", "")
-                link = f"https://www.shine.com{href}" if href.startswith("/") else href or url
+                href = url_meta.get("content", "") if url_meta else ""
+                link = href if href.startswith("http") else (f"https://www.shine.com{href}" if href else url)
                 jobs.append({
                     "title":    title_el.get_text(strip=True),
                     "company":  company_el.get_text(strip=True) if company_el else "Company",
