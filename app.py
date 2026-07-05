@@ -5,7 +5,6 @@ import secrets
 import threading
 from datetime import datetime, timezone
 
-import pdfplumber
 from apscheduler.schedulers.background import BackgroundScheduler
 from cachetools import TTLCache
 from flask import Flask, jsonify, render_template, request
@@ -122,6 +121,7 @@ JOB_TITLE_TERMS = [
 # ─────────────────────── PDF parsing ─────────────────────────────
 
 def parse_cv_text(file_stream):
+    import pdfplumber
     parts = []
     with pdfplumber.open(file_stream) as pdf:
         for page in pdf.pages:

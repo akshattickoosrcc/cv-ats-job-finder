@@ -5,6 +5,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app -c gunicorn.conf.py
     plan: free
+    healthCheckPath: /api/ping
     envVars:
       - key: PORT
         value: 10000
