@@ -913,6 +913,12 @@ def search_jobs_route():
             base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
             if country != "in":
                 base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
+
+        # Fallback: if country-specific scrape failed (blocked IPs etc.), show remote jobs
+        if len(base_jobs) == 0 and country not in ("in", "remote"):
+            base_jobs = sc.scrape_live(field, country="remote")
+            db.save_jobs(base_jobs)
+
         with _job_cache_lock:
             _job_cache[cache_key] = base_jobs
 
@@ -932,6 +938,9 @@ def search_jobs_route():
         "live_scraped": False,
         "cached":      True,
         "country":     country,
+        "fallback_remote": len(jobs) > 0 and country not in ("in", "remote") and not any(
+            _scrapers().detect_country(j.get("location", "")) == country for j in jobs[:5]
+        ),
     })
 
 

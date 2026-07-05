@@ -1437,6 +1437,10 @@ async function doSearch() {
     if (allJobs.length === 0) {
       toast(`No ${countryLabel} jobs found — try a broader term or different country`, 'error');
       scrapeNote.textContent = 'No results found. Try a broader term, or switch country.';
+    } else if (data.fallback_remote) {
+      toast(`Showing remote jobs — ${countryLabel} listings unavailable right now`, 'info');
+      const srcs = [...new Set(allJobs.map(j => j.source))].join(', ');
+      scrapeNote.textContent = `Showing remote/global jobs as fallback. Sources: ${srcs}.`;
     } else {
       toast(`Found ${allJobs.length} ${countryLabel} jobs`, 'success');
       const srcs = [...new Set(allJobs.map(j => j.source))].join(', ');
