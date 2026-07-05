@@ -902,25 +902,25 @@ def search_jobs_route():
         base_jobs = _job_cache.get(cache_key)
 
     if base_jobs is None:
+        sc = _scrapers()
         base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
-        # For non-India countries, also include any already-scraped international jobs
         if country != "in":
-            base_jobs = [j for j in base_jobs if _scrapers().detect_country(j.get("location", "")) == country]
+            base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
 
-        live_jobs: list[dict] = []
-        if len(base_jobs) < 15:
-            live_jobs = _scrapers().scrape_live(field, country=country)
+        if len(base_jobs) < 30:
+            live_jobs = sc.scrape_live(field, country=country)
             db.save_jobs(live_jobs)
             base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
             if country != "in":
-                base_jobs = [j for j in base_jobs if _scrapers().detect_country(j.get("location", "")) == country]
+                base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
         with _job_cache_lock:
             _job_cache[cache_key] = base_jobs
 
+    sc = _scrapers()
     jobs = []
     for job in base_jobs:
         j = dict(job)
-        j["country"]  = _scrapers().detect_country(j.get("location", ""))
+        j["country"]  = sc.detect_country(j.get("location", ""))
         j["match_score"], j["matched_keywords"] = score_job(j, cv_keywords)
         jobs.append(j)
 
@@ -980,12 +980,16 @@ def _ping_self():
         pass
 
 
+def _run_scrape():
+    _scrapers().run_full_scrape()
+
+
 def _start_scheduler():
     scheduler = BackgroundScheduler(timezone="UTC")
     scheduler.add_job(
-        _scrapers().run_full_scrape,
+        _run_scrape,
         trigger="interval",
-        hours=24,
+        hours=6,
         id="daily_scrape",
         replace_existing=True,
     )
@@ -997,10 +1001,12 @@ def _start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    # Only run initial scrape locally — on Render the scheduler handles it at 24h intervals
-    # to avoid OOM crash on 512MB free tier during startup
-    if not os.environ.get("RENDER"):
-        threading.Thread(target=_scrapers().run_full_scrape, daemon=True).start()
+    # Run initial scrape after 30s on all environments so DB is populated
+    def _delayed():
+        import time as _t
+        _t.sleep(30)
+        _run_scrape()
+    threading.Thread(target=_delayed, daemon=True).start()
 
 
 @app.route("/api/ping")
