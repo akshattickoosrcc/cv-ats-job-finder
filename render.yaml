@@ -12,3 +12,5 @@ services:
         generateValue: true
       - key: WEB_CONCURRENCY
         value: 4
+      - key: RENDER_EXTERNAL_URL
+        value: https://job-finder-2fr1.onrender.com
