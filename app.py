@@ -34,6 +34,8 @@ limiter = Limiter(
 # ── In-process caches ─────────────────────────────────────────────
 _job_cache        = TTLCache(maxsize=64, ttl=120)    # cache job searches 2 min
 _job_cache_lock   = threading.Lock()
+_active_users     = TTLCache(maxsize=10000, ttl=300) # unique visitors last 5 min
+_active_users_lock = threading.Lock()
 
 # ─────────────────────── ATS keyword data ────────────────────────
 
@@ -823,6 +825,20 @@ def score_job(job, cv_keywords):
 
 # ─────────────────────── Routes ──────────────────────────────────
 
+@app.before_request
+def track_active_user():
+    # Track unique visitors by session ID; ignores health-check pings
+    if request.path in ("/api/ping",):
+        return
+    uid = session.get("uid")
+    if not uid:
+        import secrets as _sec
+        uid = _sec.token_hex(8)
+        session["uid"] = uid
+    with _active_users_lock:
+        _active_users[uid] = 1
+
+
 @app.after_request
 def set_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -1051,6 +1067,17 @@ def _start_scheduler():
 @app.route("/api/ping")
 def ping():
     return jsonify({"ok": True})
+
+
+@app.route("/api/stats")
+def stats():
+    with _active_users_lock:
+        active = len(_active_users)
+    return jsonify({
+        "active_users": active,
+        "total_jobs": db.total_jobs(),
+        "last_scrape": db.get_last_scrape(),
+    })
 
 
 if __name__ == "__main__":
