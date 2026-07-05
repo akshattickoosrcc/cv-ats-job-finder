@@ -737,6 +737,233 @@ def scrape_linkedin_eu(query: str) -> list[dict]:
     return jobs
 
 
+# ─────────────────────── Remotive (Remote — free API) ───────────
+
+def scrape_remotive(query: str) -> list[dict]:
+    jobs = []
+    try:
+        import json as _json
+        r = requests.get(
+            f"https://remotive.com/api/remote-jobs?search={urllib.parse.quote_plus(query)}&limit=50",
+            headers=_h(json_req=True), timeout=14,
+        )
+        if r.status_code != 200:
+            return []
+        q_words = query.lower().split()
+        for item in _json.loads(r.text).get("jobs", []):
+            title_l = item.get("title", "").lower()
+            # client-side filter: title must contain at least one query word
+            if not any(w in title_l for w in q_words):
+                continue
+            jobs.append({
+                "title":    item.get("title", ""),
+                "company":  item.get("company_name", "Company"),
+                "location": item.get("candidate_required_location") or "Remote",
+                "link":     item.get("url", "https://remotive.com"),
+                "source":   "Remotive",
+            })
+            if len(jobs) >= 15:
+                break
+    except Exception as e:
+        print(f"[Remotive] {e}")
+    return jobs
+
+
+# ─────────────────────── Jobicy (Remote — free API) ──────────────
+
+def scrape_jobicy(query: str) -> list[dict]:
+    """Jobicy free API — remote jobs by tag; uses multiple tags to get broad coverage."""
+    jobs = []
+    seen_ids: set = set()
+    try:
+        import json as _json
+        # Jobicy caps at 3 results per tag; use individual words + full slug for coverage
+        q_words = query.lower().split()
+        tags_to_try = list(dict.fromkeys([query.lower().replace(" ", "-")] + q_words))
+        for tag in tags_to_try[:4]:
+            r = requests.get(
+                f"https://jobicy.com/api/v2/remote-jobs?count=20&tag={urllib.parse.quote(tag)}",
+                headers=_h(json_req=True), timeout=14,
+            )
+            if r.status_code != 200:
+                continue
+            for item in _json.loads(r.text).get("jobs", []):
+                jid = item.get("id")
+                if jid in seen_ids:
+                    continue
+                seen_ids.add(jid)
+                geo = item.get("jobGeo") or "Remote"
+                jobs.append({
+                    "title":    item.get("jobTitle", ""),
+                    "company":  item.get("companyName", "Company"),
+                    "location": f"{geo} (Remote)" if geo not in ("Remote", "Anywhere") else "Remote",
+                    "link":     item.get("url", "https://jobicy.com"),
+                    "source":   "Jobicy",
+                })
+                if len(jobs) >= 15:
+                    return jobs
+    except Exception as e:
+        print(f"[Jobicy] {e}")
+    return jobs
+
+
+# ─────────────────────── Arbeitnow (EU + Remote — free API) ──────
+
+def scrape_arbeitnow(query: str) -> list[dict]:
+    """Arbeitnow free API — EU-focused + remote, English-language roles."""
+    jobs = []
+    try:
+        import json as _json
+        # Arbeitnow paginates; fetch first 2 pages
+        for page in range(1, 3):
+            r = requests.get(
+                f"https://www.arbeitnow.com/api/job-board-api?page={page}",
+                headers=_h(json_req=True), timeout=14,
+            )
+            if r.status_code != 200:
+                break
+            q = query.lower()
+            for item in _json.loads(r.text).get("data", []):
+                title = item.get("title", "")
+                if not any(w in title.lower() for w in q.split()):
+                    continue
+                remote = item.get("remote", False)
+                loc = "Remote" if remote else item.get("location", "Europe")
+                jobs.append({
+                    "title":    title,
+                    "company":  item.get("company_name", "Company"),
+                    "location": loc,
+                    "link":     item.get("url", "https://www.arbeitnow.com"),
+                    "source":   "Arbeitnow",
+                })
+                if len(jobs) >= 15:
+                    break
+            if len(jobs) >= 15:
+                break
+    except Exception as e:
+        print(f"[Arbeitnow] {e}")
+    return jobs
+
+
+# ─────────────────────── Himalayas (Remote — free API) ───────────
+
+def scrape_himalayas(query: str) -> list[dict]:
+    """Himalayas free API — quality remote jobs from vetted companies."""
+    jobs = []
+    try:
+        import json as _json
+        q_words = query.lower().split()
+        # Fetch pages and filter client-side (API q param doesn't filter by title)
+        for page_offset in range(0, 200, 50):
+            r = requests.get(
+                f"https://himalayas.app/jobs/api?limit=50&offset={page_offset}",
+                headers=_h(json_req=True), timeout=14,
+            )
+            if r.status_code != 200:
+                break
+            for item in _json.loads(r.text).get("jobs", []):
+                title_l = item.get("title", "").lower()
+                if not any(w in title_l for w in q_words):
+                    continue
+                company_slug = item.get("companySlug", "")
+                job_slug = item.get("slug", "")
+                link = (f"https://himalayas.app/companies/{company_slug}/jobs/{job_slug}"
+                        if company_slug and job_slug else "https://himalayas.app/jobs")
+                jobs.append({
+                    "title":    item.get("title", ""),
+                    "company":  item.get("companyName", "Company"),
+                    "location": item.get("location") or "Remote",
+                    "link":     link,
+                    "source":   "Himalayas",
+                })
+                if len(jobs) >= 15:
+                    return jobs
+    except Exception as e:
+        print(f"[Himalayas] {e}")
+    return jobs
+
+
+# ─────────────────────── The Muse (US/Global — free API) ─────────
+
+def scrape_themuse(query: str) -> list[dict]:
+    """The Muse public API — curated jobs, 410k+ listings, US/global."""
+    jobs = []
+    try:
+        import json as _json
+        q_words = query.lower().split()
+        # Fetch multiple pages and filter client-side
+        for page in range(1, 4):
+            r = requests.get(
+                f"https://www.themuse.com/api/public/jobs?page={page}&descending=true",
+                headers=_h(json_req=True), timeout=14,
+            )
+            if r.status_code != 200:
+                break
+            for item in _json.loads(r.text).get("results", []):
+                title_l = item.get("name", "").lower()
+                if not any(w in title_l for w in q_words):
+                    continue
+                locations = item.get("locations", [{}])
+                loc = locations[0].get("name", "USA") if locations else "USA"
+                link = item.get("refs", {}).get("landing_page", "https://www.themuse.com/jobs")
+                jobs.append({
+                    "title":    item.get("name", ""),
+                    "company":  item.get("company", {}).get("name", "Company"),
+                    "location": loc,
+                    "link":     link,
+                    "source":   "The Muse",
+                })
+                if len(jobs) >= 15:
+                    return jobs
+    except Exception as e:
+        print(f"[TheMuse] {e}")
+    return jobs
+
+
+# ─────────────────────── Adzuna (Global — free API w/ key) ───────
+
+def scrape_adzuna(query: str, country: str = "in") -> list[dict]:
+    """
+    Adzuna free API — real jobs from 16 countries. Requires ADZUNA_APP_ID
+    and ADZUNA_APP_KEY env vars. Returns empty list if keys not set.
+    Sign up free: https://developer.adzuna.com/
+    """
+    import os as _os, json as _json
+    app_id  = _os.environ.get("ADZUNA_APP_ID", "")
+    app_key = _os.environ.get("ADZUNA_APP_KEY", "")
+    if not app_id or not app_key:
+        return []
+    # Map our country codes to Adzuna country codes
+    country_map = {"in": "in", "us": "us", "uk": "gb", "au": "au", "ca": "ca",
+                   "de": "de", "fr": "fr", "nl": "nl", "sg": "sg", "remote": "us"}
+    az_country = country_map.get(country, "in")
+    jobs = []
+    try:
+        r = requests.get(
+            f"https://api.adzuna.com/v1/api/jobs/{az_country}/search/1"
+            f"?app_id={app_id}&app_key={app_key}"
+            f"&results_per_page=20&what={urllib.parse.quote_plus(query)}"
+            f"&content-type=application/json",
+            headers=_h(json_req=True), timeout=14,
+        )
+        if r.status_code != 200:
+            return []
+        for item in _json.loads(r.text).get("results", []):
+            loc = item.get("location", {}).get("display_name", "")
+            jobs.append({
+                "title":    item.get("title", ""),
+                "company":  item.get("company", {}).get("display_name", "Company"),
+                "location": loc,
+                "link":     item.get("redirect_url", "https://www.adzuna.com"),
+                "source":   "Adzuna",
+            })
+            if len(jobs) >= 15:
+                break
+    except Exception as e:
+        print(f"[Adzuna] {e}")
+    return jobs
+
+
 # ─────────────────────── Full background scrape ──────────────────
 
 INDIA_SEARCH_TERMS = [
@@ -858,25 +1085,82 @@ def run_full_scrape():
         total_saved += n
         print(f"[Scraper] India boards: {len(india_jobs)} fetched, {n} new saved")
 
-        # ── Global remote job boards ──
+        # ── Global remote job boards + new free APIs ──
         def scrape_boards_for_term(term):
             results = []
-            for fn in [scrape_remoteok, scrape_wwr]:
+            for fn in [scrape_remoteok, scrape_wwr, scrape_remotive, scrape_jobicy,
+                       scrape_himalayas, scrape_themuse, scrape_adzuna]:
                 try:
-                    results.extend(fn(term))
+                    r = fn(term) if fn != scrape_adzuna else fn(term, country="us")
+                    results.extend(r)
                     time.sleep(0.3)
                 except Exception:
                     pass
             return results
 
         board_jobs: list[dict] = []
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             futs = [ex.submit(scrape_boards_for_term, t) for t in BOARD_SEARCH_TERMS]
             for fut in as_completed(futs):
                 board_jobs.extend(fut.result())
         n = db.save_jobs(board_jobs)
         total_saved += n
         print(f"[Scraper] Global boards: {len(board_jobs)} fetched, {n} new saved")
+
+        # ── Himalayas bulk fetch (Remote — all vetted jobs) ──
+        try:
+            import json as _json
+            hima_jobs: list[dict] = []
+            for offset in range(0, 500, 50):
+                r = requests.get(f"https://himalayas.app/jobs/api?limit=50&offset={offset}",
+                                 headers=_h(json_req=True), timeout=14)
+                if r.status_code != 200:
+                    break
+                page_jobs = _json.loads(r.text).get("jobs", [])
+                if not page_jobs:
+                    break
+                for item in page_jobs:
+                    cs = item.get("companySlug", "")
+                    js = item.get("slug", "")
+                    link = (f"https://himalayas.app/companies/{cs}/jobs/{js}"
+                            if cs and js else "https://himalayas.app/jobs")
+                    hima_jobs.append({
+                        "title":    item.get("title", ""),
+                        "company":  item.get("companyName", "Company"),
+                        "location": item.get("location") or "Remote",
+                        "link":     link,
+                        "source":   "Himalayas",
+                    })
+            n = db.save_jobs(hima_jobs)
+            total_saved += n
+            print(f"[Scraper] Himalayas: {len(hima_jobs)} fetched, {n} new saved")
+        except Exception as e:
+            print(f"[Scraper] Himalayas bulk failed: {e}")
+
+        # ── Arbeitnow bulk fetch (EU/Remote) — paginate once over all pages ──
+        try:
+            import json as _json
+            arb_jobs: list[dict] = []
+            for page in range(1, 4):
+                r = requests.get(f"https://www.arbeitnow.com/api/job-board-api?page={page}",
+                                 headers=_h(json_req=True), timeout=14)
+                if r.status_code != 200:
+                    break
+                for item in _json.loads(r.text).get("data", []):
+                    remote = item.get("remote", False)
+                    loc = "Remote" if remote else item.get("location", "Europe")
+                    arb_jobs.append({
+                        "title":    item.get("title", ""),
+                        "company":  item.get("company_name", "Company"),
+                        "location": loc,
+                        "link":     item.get("url", "https://www.arbeitnow.com"),
+                        "source":   "Arbeitnow",
+                    })
+            n = db.save_jobs(arb_jobs)
+            total_saved += n
+            print(f"[Scraper] Arbeitnow: {len(arb_jobs)} fetched, {n} new saved")
+        except Exception as e:
+            print(f"[Scraper] Arbeitnow bulk failed: {e}")
 
         # ── International boards (UK / US / EU / AU) — skip on Render free tier ──
         import os as _os
@@ -915,23 +1199,28 @@ def run_full_scrape():
 
 
 def scrape_live(query: str, country: str = "in") -> list[dict]:
-    """Quick live scrape — routes to the right source based on country."""
+    """Quick live scrape — routes to the right sources based on country."""
     all_jobs: list[dict] = []
+    # Free API sources always included (no scraping, real verified jobs)
+    free_api_sources = [scrape_remotive, scrape_jobicy, scrape_remoteok, scrape_wwr]
     if country == "uk":
-        sources = [scrape_reed_uk, scrape_linkedin_uk, scrape_glassdoor]
+        sources = [scrape_reed_uk, scrape_linkedin_uk, scrape_glassdoor, *free_api_sources]
     elif country == "us":
-        sources = [scrape_linkedin_us, scrape_indeed, scrape_glassdoor, scrape_wellfound]
+        sources = [scrape_linkedin_us, scrape_indeed, scrape_wellfound, scrape_themuse,
+                   *free_api_sources, lambda q: scrape_adzuna(q, "us")]
     elif country == "au":
-        sources = [scrape_seek_au, scrape_linkedin]
+        sources = [scrape_seek_au, *free_api_sources, lambda q: scrape_adzuna(q, "au")]
     elif country == "eu":
-        sources = [scrape_linkedin_eu, scrape_glassdoor]
+        sources = [scrape_linkedin_eu, scrape_arbeitnow, *free_api_sources,
+                   lambda q: scrape_adzuna(q, "de")]
     elif country == "remote":
-        sources = [scrape_remoteok, scrape_wwr, scrape_wellfound, scrape_linkedin]
+        sources = [*free_api_sources, scrape_wellfound, scrape_arbeitnow, scrape_themuse]
     else:  # "in" or default
-        sources = [scrape_naukri, scrape_internshala, scrape_timesjobs, scrape_shine, scrape_foundit, scrape_linkedin_india]
+        sources = [scrape_internshala, scrape_shine, scrape_linkedin_india,
+                   *free_api_sources, lambda q: scrape_adzuna(q, "in")]
 
-    with ThreadPoolExecutor(max_workers=12) as ex:
-        futs = {ex.submit(fn, query): fn.__name__ for fn in sources}
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futs = {ex.submit(fn, query): getattr(fn, "__name__", "lambda") for fn in sources}
         for fut in as_completed(futs):
             try:
                 all_jobs.extend(fut.result(timeout=18))
