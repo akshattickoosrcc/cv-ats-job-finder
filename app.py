@@ -931,7 +931,7 @@ def search_jobs_route():
         if country != "in":
             base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
 
-        if len(base_jobs) < 5:
+        if len(base_jobs) < 30:
             live_jobs = sc.scrape_live(field, country=country)
             db.save_jobs(live_jobs)
             base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
@@ -1019,11 +1019,7 @@ def _ping_self():
 
 
 def _run_scrape():
-    sc = _scrapers()
-    if os.environ.get("RENDER"):
-        sc.run_fast_scrape()
-    else:
-        sc.run_full_scrape()
+    _scrapers().run_full_scrape()
 
 
 def _start_scheduler():
@@ -1043,19 +1039,12 @@ def _start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-
-    def _delayed_startup():
+    # Startup scrape after 30s so DB is populated after each deploy
+    def _delayed():
         import time as _t
-        _t.sleep(20)
-        sc = _scrapers()
-        if os.environ.get("RENDER"):
-            # On Render, DB is wiped on every deploy — run lightweight seed scrape
-            # (Greenhouse + Lever JSON APIs + remote boards, no HTML parsing → safe RAM)
-            sc.run_fast_scrape()
-        else:
-            sc.run_full_scrape()
-
-    threading.Thread(target=_delayed_startup, daemon=True).start()
+        _t.sleep(30)
+        _run_scrape()
+    threading.Thread(target=_delayed, daemon=True).start()
 
 
 @app.route("/api/ping")
