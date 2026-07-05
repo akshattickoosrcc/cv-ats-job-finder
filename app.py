@@ -1078,12 +1078,10 @@ def _start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    # Delay initial scrape 60s so gunicorn finishes binding before heavy work
-    def _delayed_scrape():
-        import time as _time
-        _time.sleep(60)
-        scrapers.run_full_scrape()
-    threading.Thread(target=_delayed_scrape, daemon=True).start()
+    # Only run initial scrape locally — on Render the scheduler handles it at 24h intervals
+    # to avoid OOM crash on 512MB free tier during startup
+    if not os.environ.get("RENDER"):
+        threading.Thread(target=scrapers.run_full_scrape, daemon=True).start()
 
 
 @app.route("/api/ping")
