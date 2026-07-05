@@ -1,7 +1,6 @@
 import io
 import os
 import re
-import secrets
 import threading
 from datetime import datetime, timezone
 
@@ -12,8 +11,6 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 import db
-import payments
-
 # Lazy-load scrapers — BeautifulSoup/lxml/requests are heavy; don't load at boot
 def _scrapers():
     import scrapers as _s
@@ -25,20 +22,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "cvfinder-dev-key-change-in-prod")
 
 # ── Payment ingest token: kept stable across restarts so the phone-side ──
 # ── SMS-forwarding setup only needs to be entered once.                  ──
-_TOKEN_PATH = db.DB_PATH.parent / "payment_ingest_token.txt"
-
-def _get_ingest_token() -> str:
-    env_token = os.environ.get("PAYMENT_INGEST_TOKEN")
-    if env_token:
-        return env_token
-    if _TOKEN_PATH.exists():
-        return _TOKEN_PATH.read_text().strip()
-    token = secrets.token_urlsafe(24)
-    _TOKEN_PATH.write_text(token)
-    return token
-
-PAYMENT_INGEST_TOKEN = _get_ingest_token()
-
 # ── Rate limiting ─────────────────────────────────────────────────
 limiter = Limiter(
     get_remote_address,
@@ -849,74 +832,6 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/payments")
-def payments_page():
-    return render_template("payments.html", ingest_token=PAYMENT_INGEST_TOKEN)
-
-
-# ─────────────────────── Payment tracker API ──────────────────────
-
-@app.route("/api/payments/ingest", methods=["POST"])
-@limiter.limit("120 per minute")
-def payments_ingest_route():
-    data = request.get_json(silent=True) or {}
-    token = data.get("token") or request.headers.get("X-Ingest-Token")
-    if not token or not secrets.compare_digest(token, PAYMENT_INGEST_TOKEN):
-        return jsonify({"error": "Invalid or missing token"}), 401
-
-    messages = data.get("messages")
-    if messages is None:
-        single = data.get("sms")
-        messages = [single] if single else []
-    if not isinstance(messages, list) or not messages:
-        return jsonify({"error": "No SMS text provided"}), 400
-
-    saved, skipped, ignored = 0, 0, 0
-    for text in messages:
-        if not isinstance(text, str):
-            ignored += 1
-            continue
-        txn = payments.parse_sms(text)
-        if not txn:
-            ignored += 1
-            continue
-        if db.save_transaction(txn):
-            saved += 1
-        else:
-            skipped += 1
-
-    return jsonify({"saved": saved, "duplicates": skipped, "not_transactions": ignored})
-
-
-@app.route("/api/payments/summary")
-def payments_summary_route():
-    month = (request.args.get("month") or datetime.now(timezone.utc).strftime("%Y-%m")).strip()
-    summary = db.get_monthly_summary(month)
-    summary["available_months"] = db.available_months()
-    return jsonify(summary)
-
-
-@app.route("/api/payments/transactions")
-def payments_transactions_route():
-    month = request.args.get("month")
-    category = request.args.get("category")
-    return jsonify(db.get_transactions(month=month, category=category))
-
-
-@app.route("/api/payments/transactions/<int:txn_id>/category", methods=["POST"])
-def payments_recategorize_route(txn_id):
-    data = request.get_json(silent=True) or {}
-    category = (data.get("category") or "").strip().lower()
-    if category not in payments.CATEGORY_KEYWORDS and category != "other":
-        return jsonify({"error": "Unknown category"}), 400
-    db.update_transaction_category(txn_id, category)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/payments/transactions/<int:txn_id>", methods=["DELETE"])
-def payments_delete_route(txn_id):
-    db.delete_transaction(txn_id)
-    return jsonify({"ok": True})
 
 
 @app.route("/api/analyze-cv", methods=["POST"])
