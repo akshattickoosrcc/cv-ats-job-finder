@@ -1036,7 +1036,11 @@ def _ping_self():
 
 
 def _run_scrape():
-    _scrapers().run_full_scrape()
+    sc = _scrapers()
+    if os.environ.get("RENDER"):
+        sc.run_render_scrape()
+    else:
+        sc.run_full_scrape()
 
 
 def _start_scheduler():

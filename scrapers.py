@@ -909,6 +909,47 @@ def run_full_scrape():
         _SCRAPE_RUNNING = False
 
 
+def run_render_scrape():
+    """Lightweight scrape for Render free tier (512 MB RAM).
+    Only hits Greenhouse + Lever JSON APIs — no HTML scrapers, no ThreadPoolExecutor spam."""
+    global _SCRAPE_RUNNING
+    if _SCRAPE_RUNNING:
+        print("[Scraper] Already running, skipping.")
+        return
+    _SCRAPE_RUNNING = True
+    log_id = db.start_scrape_log()
+    total_saved = 0
+    print(f"[Scraper] Render lightweight scrape — {len(GREENHOUSE_COMPANIES)} GH + {len(LEVER_COMPANIES)} Lever")
+    try:
+        db.clear_old_jobs(keep_days=2)
+
+        gh_jobs: list[dict] = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs = {ex.submit(scrape_greenhouse, c, True): c for c in GREENHOUSE_COMPANIES}
+            for fut in as_completed(futs):
+                gh_jobs.extend(fut.result())
+        n = db.save_jobs(gh_jobs)
+        total_saved += n
+        print(f"[Scraper] Greenhouse India: {len(gh_jobs)} fetched, {n} saved")
+
+        lv_jobs: list[dict] = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs = {ex.submit(scrape_lever, c, True): c for c in LEVER_COMPANIES}
+            for fut in as_completed(futs):
+                lv_jobs.extend(fut.result())
+        n = db.save_jobs(lv_jobs)
+        total_saved += n
+        print(f"[Scraper] Lever India: {len(lv_jobs)} fetched, {n} saved")
+
+        db.finish_scrape_log(log_id, total_saved, "done")
+        print(f"[Scraper] Done. Total jobs in DB: {db.total_jobs()}")
+    except Exception as e:
+        print(f"[Scraper] Error: {e}")
+        db.finish_scrape_log(log_id, total_saved, "error")
+    finally:
+        _SCRAPE_RUNNING = False
+
+
 def _greenhouse_search(query: str) -> list[dict]:
     """Search all cached Greenhouse India jobs by query words."""
     q_words = query.lower().split()
