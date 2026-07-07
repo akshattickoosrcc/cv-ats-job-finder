@@ -28,7 +28,8 @@ def _scrapers():
 UPLOAD_DIR      = os.environ.get("UPLOAD_DIR", os.path.join(
     os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__))), "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-MAX_QUEUE_DEPTH = int(os.environ.get("MAX_QUEUE_DEPTH", "40"))   # soft cap for "high demand"
+MAX_QUEUE_DEPTH = int(os.environ.get("MAX_QUEUE_DEPTH", "40"))    # soft cap → "high demand" message
+MAX_QUEUE_HARD  = int(os.environ.get("MAX_QUEUE_HARD", "200"))    # hard cap → shed load, protect the box
 WORKER_STALE_S  = int(os.environ.get("WORKER_STALE_SECONDS", "120"))
 
 app = Flask(__name__)
@@ -1053,6 +1054,16 @@ def analyze_cv_route():
 
     q = get_queue()
     depth = q.depth()
+
+    # Load-shedding: if the backlog is dangerously deep, reject new uploads with
+    # a friendly message instead of letting the queue (and memory) grow without
+    # bound. This is what keeps the box UP under an extreme flood — excess users
+    # are asked to retry rather than dragging everyone down or crashing it.
+    if depth >= MAX_QUEUE_HARD:
+        return jsonify({
+            "error": "We're at full capacity right now — please try again in a minute. "
+                     "Your CV wasn't lost; just re-upload shortly."
+        }), 503
 
     # Store the file with a server-generated UUID name (never the user's name).
     pdf_path = os.path.join(UPLOAD_DIR, uuid.uuid4().hex + ".pdf")
