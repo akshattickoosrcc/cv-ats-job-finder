@@ -1243,13 +1243,21 @@ def scrape_now():
 # ─────────────────────── Scheduler ───────────────────────────────
 
 def _ping_self():
-    """Keep Render free tier awake by pinging own /api/ping every 10 minutes."""
+    """Keep Render free tier awake by pinging own /api/ping every 10 minutes.
+    Uses the URL/hostname Render injects for THIS service so the ping always
+    lands on the live instance (a wrong URL = spin-downs = cold-start delays)."""
+    url = os.environ.get("RENDER_EXTERNAL_URL", "")
+    if not url:
+        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
+        if host:
+            url = f"https://{host}"
+    if not url:
+        return
     try:
-        render_url = os.environ.get("RENDER_EXTERNAL_URL", "")
-        if render_url:
-            _requests.get(f"{render_url}/api/ping", timeout=10)
-    except Exception:
-        pass
+        r = _requests.get(f"{url}/api/ping", timeout=10)
+        app.logger.info("keep-alive ping %s/api/ping -> %s", url, r.status_code)
+    except Exception as e:
+        app.logger.warning("keep-alive ping failed: %s", e)
 
 
 def _run_scrape():

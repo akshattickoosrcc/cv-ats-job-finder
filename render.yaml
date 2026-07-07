@@ -13,7 +13,8 @@ services:
         generateValue: true
       - key: WEB_CONCURRENCY
         value: 1
-      - key: RENDER_EXTERNAL_URL
-        value: https://job-finder-2fr1.onrender.com
+      # RENDER_EXTERNAL_URL is injected automatically by Render with the
+      # correct URL for THIS service — do not hardcode it (a stale value
+      # breaks the keep-alive self-ping and causes cold-start spin-downs).
       - key: RENDER
         value: true
