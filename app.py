@@ -1,3 +1,4 @@
+import concurrent.futures
 import io
 import os
 import re
@@ -10,6 +11,7 @@ from cachetools import TTLCache
 from flask import Flask, jsonify, render_template, request, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import db
 # Lazy-load scrapers — BeautifulSoup/lxml/requests are heavy; don't load at boot
@@ -17,9 +19,19 @@ def _scrapers():
     import scrapers as _s
     return _s
 
+# ── Upload hardening limits ───────────────────────────────────────
+MAX_PDF_BYTES  = 2 * 1024 * 1024   # 2 MB hard cap
+MAX_PDF_PAGES  = 2                 # CV must be ≤ 2 pages
+MAX_TEXT_BYTES = 500 * 1024        # abort text extraction past 500 KB
+PARSE_TIMEOUT  = 20                # seconds — kill a runaway parse
+
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_PDF_BYTES
 app.secret_key = os.environ.get("SECRET_KEY", "cvfinder-dev-key-change-in-prod")
+
+# Behind Render's proxy: trust exactly ONE forwarded hop so get_remote_address
+# (rate-limiting + per-IP guards) sees the real client IP, not the proxy's.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # ── Payment ingest token: kept stable across restarts so the phone-side ──
 # ── SMS-forwarding setup only needs to be entered once.                  ──
@@ -34,8 +46,13 @@ limiter = Limiter(
 # ── In-process caches ─────────────────────────────────────────────
 _job_cache        = TTLCache(maxsize=64, ttl=120)    # cache job searches 2 min
 _job_cache_lock   = threading.Lock()
-_active_users     = TTLCache(maxsize=10000, ttl=300) # unique visitors last 5 min
-_active_users_lock = threading.Lock()
+
+# Per-IP in-progress upload guard: one analysis at a time per client IP.
+_uploads_in_progress: set[str] = set()
+_uploads_lock       = threading.Lock()
+
+# Dedicated single-thread pool for bounded PDF parsing (enforces PARSE_TIMEOUT).
+_parse_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 # ─────────────────────── ATS keyword data ────────────────────────
 
@@ -105,15 +122,87 @@ JOB_TITLE_TERMS = [
 
 # ─────────────────────── PDF parsing ─────────────────────────────
 
-def parse_cv_text(file_stream):
+class PdfRejected(Exception):
+    """Raised when an uploaded PDF fails a safety/validation check.
+    The message is safe to show the user."""
+
+
+def _has_embedded_files(reader) -> bool:
+    """True if the PDF carries embedded files / attachments (a common
+    malware / data-exfiltration vector — we only ever want plain text)."""
+    try:
+        root = reader.trailer["/Root"]
+        names = root.get("/Names")
+        if names and names.get("/EmbeddedFiles"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def validate_pdf(raw: bytes) -> None:
+    """Reject non-PDFs, oversized, encrypted, over-length, or booby-trapped
+    files BEFORE any heavy parsing. Raises PdfRejected with a user-safe message."""
+    # 1) Genuine PDF by magic bytes — not extension or Content-Type.
+    if not raw[:5] == b"%PDF-":
+        raise PdfRejected("That doesn't look like a valid PDF file.")
+
+    # 2) Hard size cap (belt-and-suspenders with MAX_CONTENT_LENGTH).
+    if len(raw) > MAX_PDF_BYTES:
+        raise PdfRejected("File too large — please upload a CV under 2 MB.")
+
+    from pypdf import PdfReader
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+    except Exception:
+        raise PdfRejected("This file could not be processed.")
+
+    # 3) No encrypted / password-protected PDFs.
+    if getattr(reader, "is_encrypted", False):
+        raise PdfRejected("Password-protected PDFs aren't supported — please upload an unlocked CV.")
+
+    # 4) Page count — checked lazily, before extracting any text.
+    try:
+        num_pages = len(reader.pages)
+    except Exception:
+        raise PdfRejected("This file could not be processed.")
+    if num_pages == 0:
+        raise PdfRejected("This file could not be processed.")
+    if num_pages > MAX_PDF_PAGES:
+        raise PdfRejected("Please upload a CV of maximum 2 pages.")
+
+    # 5) No embedded files / attachments.
+    if _has_embedded_files(reader):
+        raise PdfRejected("This file could not be processed.")
+
+
+def _extract_text(raw: bytes) -> str:
+    """Plain-text-only extraction with a hard output cap. pdfplumber never
+    executes JS or resolves external references — text extraction only.
+    Aborts once MAX_TEXT_BYTES is exceeded (decompression-bomb guard)."""
     import pdfplumber
-    parts = []
-    with pdfplumber.open(file_stream) as pdf:
-        for page in pdf.pages:
-            txt = page.extract_text()
-            if txt:
-                parts.append(txt)
+    parts: list[str] = []
+    total = 0
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        for page in pdf.pages[:MAX_PDF_PAGES]:
+            txt = page.extract_text() or ""
+            total += len(txt.encode("utf-8", "ignore"))
+            parts.append(txt)
+            if total > MAX_TEXT_BYTES:
+                raise PdfRejected("This file could not be processed.")
     return "\n".join(parts).strip()
+
+
+def parse_cv_text(raw: bytes) -> str:
+    """Validate then extract, with a hard wall-clock parse timeout so a
+    malicious/pathological file can't pin the worker. Bounded by the 2 MB
+    input cap, 2-page cap and 500 KB text cap so memory stays flat."""
+    validate_pdf(raw)
+    fut = _parse_pool.submit(_extract_text, raw)
+    try:
+        return fut.result(timeout=PARSE_TIMEOUT)
+    except concurrent.futures.TimeoutError:
+        raise PdfRejected("This file could not be processed.")
 
 
 # ─────────────────────── ATS analysis ────────────────────────────
@@ -823,21 +912,77 @@ def score_job(job, cv_keywords):
     return len(matched), matched
 
 
+_STOP_WORDS = {"the", "and", "for", "with", "job", "jobs", "role", "senior", "junior"}
+
+def _title_similarity(query: str, title: str) -> float:
+    """Token-overlap between the search query and a job title, 0..1."""
+    q = {w for w in re.findall(r"[a-z0-9+#]+", query.lower()) if len(w) > 2 and w not in _STOP_WORDS}
+    t = {w for w in re.findall(r"[a-z0-9+#]+", title.lower()) if len(w) > 2}
+    if not q:
+        return 0.0
+    return len(q & t) / len(q)
+
+
+def _recency_score(scraped_at: str) -> float:
+    """1.0 for jobs scraped in the last 24h, decaying to 0.3 by ~5 days."""
+    if not scraped_at:
+        return 0.5
+    try:
+        ts = datetime.fromisoformat(scraped_at)
+        age_h = (datetime.utcnow() - ts).total_seconds() / 3600
+    except Exception:
+        return 0.5
+    if age_h <= 24:
+        return 1.0
+    if age_h >= 120:
+        return 0.3
+    return 1.0 - 0.7 * (age_h - 24) / 96
+
+
+def compute_match(job, cv_keywords, query, country):
+    """Weighted CV↔job match → (matched_keywords, pct 0-100).
+    Weights: skills > title similarity > location > recency."""
+    n_matched, matched = score_job(job, cv_keywords)
+
+    # Skills: share of the CV's keywords that appear in the job (capped so a
+    # handful of strong hits already scores high).
+    denom = max(1, min(len(cv_keywords), 10))
+    skills = min(1.0, n_matched / denom)
+
+    title = _title_similarity(query, job.get("title", ""))
+
+    loc_code = job.get("country") or _scrapers().detect_country(job.get("location", ""))
+    if loc_code == country:
+        location = 1.0
+    elif loc_code == "remote":
+        location = 0.7
+    else:
+        location = 0.2
+
+    recency = _recency_score(job.get("scraped_at", ""))
+
+    pct = round(100 * (0.55 * skills + 0.30 * title + 0.10 * location + 0.05 * recency))
+    return matched, max(0, min(100, pct))
+
+
+def _dedupe_jobs(jobs):
+    """Drop the same posting listed on multiple platforms (normalized
+    title + company). Keeps the first (highest-ranked) occurrence."""
+    seen = set()
+    out = []
+    for j in jobs:
+        key = (
+            re.sub(r"[^a-z0-9]", "", (j.get("title") or "").lower()),
+            re.sub(r"[^a-z0-9]", "", (j.get("company") or "").lower()),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(j)
+    return out
+
+
 # ─────────────────────── Routes ──────────────────────────────────
-
-@app.before_request
-def track_active_user():
-    # Track unique visitors by session ID; ignores health-check pings
-    if request.path in ("/api/ping",):
-        return
-    uid = session.get("uid")
-    if not uid:
-        import secrets as _sec
-        uid = _sec.token_hex(8)
-        session["uid"] = uid
-    with _active_users_lock:
-        _active_users[uid] = 1
-
 
 @app.after_request
 def set_security_headers(response):
@@ -859,6 +1004,10 @@ def set_security_headers(response):
 def too_many_requests(e):
     return jsonify({"error": "Too many requests — please wait a moment and try again"}), 429
 
+@app.errorhandler(413)
+def payload_too_large(e):
+    return jsonify({"error": "File too large — please upload a CV under 2 MB."}), 413
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -869,16 +1018,38 @@ def index():
 @app.route("/api/analyze-cv", methods=["POST"])
 @limiter.limit("10 per minute")
 def analyze_cv_route():
-    if "cv" not in request.files:
+    # Only 1 file per request — reject multi-file uploads outright.
+    files = request.files.getlist("cv")
+    if not files:
         return jsonify({"error": "No file uploaded"}), 400
-    f = request.files["cv"]
+    if len(files) > 1:
+        return jsonify({"error": "Please upload a single CV file."}), 400
+    f = files[0]
     if not f.filename:
         return jsonify({"error": "No file selected"}), 400
     if not f.filename.lower().endswith(".pdf"):
         return jsonify({"error": "Only PDF files are supported"}), 400
+
+    # One analysis in flight per client IP.
+    client_ip = get_remote_address()
+    with _uploads_lock:
+        if client_ip in _uploads_in_progress:
+            return jsonify({
+                "error": "You already have an analysis in progress. Please wait for your results."
+            }), 429
+        _uploads_in_progress.add(client_ip)
+
     try:
-        stream = io.BytesIO(f.read())
-        text   = parse_cv_text(stream)
+        raw = f.read()
+        # Manual size check — MAX_CONTENT_LENGTH already 413s, this is a fallback.
+        if len(raw) > MAX_PDF_BYTES:
+            return jsonify({"error": "File too large — please upload a CV under 2 MB."}), 400
+
+        try:
+            text = parse_cv_text(raw)          # validates + extracts (bounded)
+        except PdfRejected as pe:
+            return jsonify({"error": str(pe)}), 400
+
         if not text.strip():
             return jsonify({"error": "Could not extract text — is the PDF a scanned image?"}), 400
 
@@ -917,6 +1088,10 @@ def analyze_cv_route():
     except Exception as e:
         app.logger.error("CV analysis error: %s", e, exc_info=True)
         return jsonify({"error": "CV processing failed — please try again"}), 500
+    finally:
+        # Always release the per-IP guard, success or failure.
+        with _uploads_lock:
+            _uploads_in_progress.discard(client_ip)
 
 
 @app.route("/api/search-jobs", methods=["POST"])
@@ -964,14 +1139,19 @@ def search_jobs_route():
             _job_cache[cache_key] = base_jobs
 
     sc = _scrapers()
+    # Dedupe the same posting listed across multiple platforms first.
+    deduped = _dedupe_jobs(base_jobs)
+
     jobs = []
-    for job in base_jobs:
+    for job in deduped:
         j = dict(job)
-        j["country"]  = sc.detect_country(j.get("location", ""))
-        j["match_score"], j["matched_keywords"] = score_job(j, cv_keywords)
+        j["country"] = sc.detect_country(j.get("location", ""))
+        j["matched_keywords"], j["match_pct"] = compute_match(j, cv_keywords, field, country)
+        j["match_score"] = len(j["matched_keywords"])   # kept for backward compat
         jobs.append(j)
 
-    jobs.sort(key=lambda j: -j["match_score"])
+    # Sort by weighted match, then keyword count as a tiebreaker.
+    jobs.sort(key=lambda j: (-j["match_pct"], -j["match_score"]))
 
     return jsonify({
         "jobs":        jobs[:300],
@@ -1071,17 +1251,6 @@ def _start_scheduler():
 @app.route("/api/ping")
 def ping():
     return jsonify({"ok": True})
-
-
-@app.route("/api/stats")
-def stats():
-    with _active_users_lock:
-        active = len(_active_users)
-    return jsonify({
-        "active_users": active,
-        "total_jobs": db.total_jobs(),
-        "last_scrape": db.get_last_scrape(),
-    })
 
 
 if __name__ == "__main__":

@@ -80,23 +80,6 @@
       font-weight: 400;
     }
     .header-right { display: flex; align-items: center; gap: .75rem; }
-    .live-users {
-      display: flex; align-items: center; gap: 5px;
-      font-size: .75rem; color: var(--muted); font-weight: 500;
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 20px; padding: 3px 10px;
-    }
-    .live-dot {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 0 0 rgba(34,197,94,.4);
-      animation: livePulse 2s infinite;
-    }
-    @keyframes livePulse {
-      0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.4); }
-      70%  { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
-      100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
-    }
 
     /* ── Main wrapper ── */
     main { max-width: 960px; margin: 3rem auto 6rem; padding: 0 1.5rem; }
@@ -234,6 +217,67 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .spin-label { color: var(--muted); font-size: .88rem; }
+
+    /* ── CV analysis waiting experience ── */
+    .wait-section { display: none; padding: 2rem 1rem 1rem; text-align: center; }
+    .wait-section.on { display: block; }
+    .wait-ring {
+      position: relative; width: 92px; height: 92px; margin: 0 auto 1.25rem;
+      border-radius: 50%;
+      background: conic-gradient(var(--primary) var(--wait-deg, 0deg), var(--border) 0deg);
+      transition: background .3s ease;
+    }
+    .wait-ring::after {
+      content: ''; position: absolute; inset: 8px;
+      background: var(--surface); border-radius: 50%;
+    }
+    .wait-ring-spin {
+      position: absolute; inset: -3px; border-radius: 50%;
+      border: 3px solid transparent; border-top-color: var(--primary);
+      opacity: .55; animation: spin 1s linear infinite;
+    }
+    .wait-pct {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; font-weight: 700; font-size: 1.1rem;
+      color: var(--primary); z-index: 1;
+    }
+    .wait-title { font-size: 1.15rem; font-weight: 700; margin-bottom: .4rem; }
+    .wait-msg {
+      color: var(--muted); font-size: .88rem; max-width: 420px;
+      margin: 0 auto 1.5rem; line-height: 1.5; min-height: 2.6em;
+      transition: color .3s ease;
+    }
+    .wait-msg.busy { color: var(--warning); font-weight: 500; }
+    .wait-steps {
+      list-style: none; max-width: 320px; margin: 0 auto; text-align: left;
+      display: flex; flex-direction: column; gap: .6rem;
+    }
+    .wait-steps li {
+      display: flex; align-items: center; gap: .6rem;
+      font-size: .9rem; color: var(--muted); font-weight: 500;
+      opacity: .55; transition: opacity .3s ease, color .3s ease;
+    }
+    .wait-steps li .ws-dot {
+      width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%;
+      border: 2px solid var(--border); position: relative;
+      transition: border-color .3s ease, background .3s ease;
+    }
+    .wait-steps li.active { opacity: 1; color: var(--text); }
+    .wait-steps li.active .ws-dot {
+      border-color: var(--primary);
+      background: radial-gradient(circle, var(--primary) 40%, transparent 42%);
+      animation: wsPulse 1.4s ease-in-out infinite;
+    }
+    .wait-steps li.done { opacity: 1; color: var(--success); }
+    .wait-steps li.done .ws-dot {
+      border-color: var(--success); background: var(--success); animation: none;
+    }
+    .wait-steps li.done .ws-dot::after {
+      content: ''; position: absolute; left: 5px; top: 2px;
+      width: 5px; height: 9px; border: solid #fff;
+      border-width: 0 2px 2px 0; transform: rotate(45deg);
+    }
+    @keyframes wsPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(79,70,229,.35); } 50% { box-shadow: 0 0 0 5px rgba(79,70,229,0); } }
 
     /* ─────── STEP 2 — Results ─────── */
     .results-top {
@@ -719,9 +763,6 @@
   </div>
   <div class="header-right">
     <span class="header-tagline">ATS scoring · Domain intelligence · Job search</span>
-    <span class="live-users" id="liveUsers" title="Active users in last 5 minutes">
-      <span class="live-dot"></span><span id="liveCount">—</span> online
-    </span>
   </div>
 </header>
 
@@ -750,7 +791,7 @@
         </div>
         <h3>Drop your CV here</h3>
         <p>Drag &amp; drop a PDF, or click to browse</p>
-        <p style="margin-top:.25rem;font-size:.78rem;color:var(--muted)">PDF only · max 10 MB</p>
+        <p style="margin-top:.25rem;font-size:.78rem;color:var(--muted)">PDF only · max 2 pages · max 2 MB</p>
       </div>
 
       <div class="file-pill" id="file-pill">
@@ -771,9 +812,19 @@
         </button>
       </div>
 
-      <div class="spin-wrap" id="upload-spin">
-        <div class="spinner"></div>
-        <p class="spin-label">Parsing CV and running ATS analysis…</p>
+      <div class="wait-section" id="wait-section">
+        <div class="wait-ring" id="wait-ring">
+          <div class="wait-ring-spin"></div>
+          <span class="wait-pct" id="wait-pct">0%</span>
+        </div>
+        <h3 class="wait-title" id="wait-title">Analyzing your CV…</h3>
+        <p class="wait-msg" id="wait-msg">Your CV is being checked. For the best results, this takes about a minute — please don't close this tab.</p>
+        <ul class="wait-steps" id="wait-steps">
+          <li data-step="0"><span class="ws-dot"></span>Scanning your CV structure</li>
+          <li data-step="1"><span class="ws-dot"></span>Checking ATS compatibility</li>
+          <li data-step="2"><span class="ws-dot"></span>Matching against job requirements</li>
+          <li data-step="3"><span class="ws-dot"></span>Preparing your report</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -1045,7 +1096,8 @@ const fileInput  = $('cv-file');
 const filePill   = $('file-pill');
 const fileNameEl = $('file-name');
 const analyzeBtn = $('analyze-btn');
-const uploadSpin = $('upload-spin');
+const waitSection = $('wait-section');
+const uploadWrap = document.querySelector('.upload-wrap');
 const stepUpload = $('step-upload');
 const stepResult = $('step-results');
 const backBtn    = $('back-btn');
@@ -1147,9 +1199,82 @@ fileInput.addEventListener('change', () => {
 let chosenFile = null;
 function setFile(f) {
   if (!f.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
+  if (f.size > 2 * 1024 * 1024) { toast('File too large — please upload a CV under 2 MB.'); return; }
   chosenFile = f;
   fileNameEl.textContent = f.name;
   filePill.classList.add('visible');
+  analyzeBtn.disabled = false;
+}
+
+/* ── Waiting experience ──────────────────────────────────────────
+   Results are always held for a minimum of 90s so the analysis feels
+   thorough. A ticking progress ring + rotating steps keep it alive, and
+   if the backend is still working at 60s we switch to a "high traffic"
+   message. Validation errors bypass the wait and surface immediately. */
+const MIN_WAIT_MS  = 90000;   // hold successful results for ≥ 90s
+const BUSY_MS      = 60000;   // "high traffic" message after 60s real time
+const WAIT_STEPS   = 4;
+let waitTimer = null, waitStart = 0;
+let analysisResult = null, analysisReady = false, revealed = false;
+
+function showWaiting() {
+  analysisResult = null; analysisReady = false; revealed = false;
+  waitStart = Date.now();
+  if (uploadWrap) {
+    [...uploadWrap.children].forEach(c => { if (c !== waitSection) c.style.display = 'none'; });
+  }
+  waitSection.classList.add('on');
+  $('wait-msg').classList.remove('busy');
+  $('wait-msg').textContent = "Your CV is being checked. For the best results, this takes about a minute — please don't close this tab.";
+  document.querySelectorAll('#wait-steps li').forEach(li => li.classList.remove('active','done'));
+  clearInterval(waitTimer);
+  waitTimer = setInterval(tickWaiting, 200);
+  tickWaiting();
+}
+
+function tickWaiting() {
+  const elapsed = Date.now() - waitStart;
+  // Progress ring: climb to 95% over the min-wait window; finish only on reveal.
+  let pct = Math.min(95, (elapsed / MIN_WAIT_MS) * 100);
+  if (analysisReady && elapsed >= MIN_WAIT_MS) pct = 100;
+  $('wait-pct').textContent = Math.round(pct) + '%';
+  $('wait-ring').style.setProperty('--wait-deg', (pct * 3.6) + 'deg');
+
+  // Steps light up across the window; the final step waits for real data.
+  const steps = document.querySelectorAll('#wait-steps li');
+  const stepFloat = (elapsed / MIN_WAIT_MS) * WAIT_STEPS;
+  steps.forEach((li, i) => {
+    li.classList.toggle('active', i === Math.min(WAIT_STEPS - 1, Math.floor(stepFloat)) && !(i === WAIT_STEPS - 1 && analysisReady && elapsed >= MIN_WAIT_MS));
+    li.classList.toggle('done', i < Math.floor(stepFloat) || (analysisReady && elapsed >= MIN_WAIT_MS && i < WAIT_STEPS));
+  });
+
+  // High-traffic message if the backend is still working past 60s.
+  if (elapsed >= BUSY_MS && !analysisReady) {
+    const m = $('wait-msg');
+    m.classList.add('busy');
+    m.textContent = "Our parser is handling high traffic right now — your analysis will take a little longer. Hang tight.";
+  }
+
+  maybeReveal();
+}
+
+function maybeReveal() {
+  if (revealed || !analysisReady || !analysisResult) return;
+  if (Date.now() - waitStart < MIN_WAIT_MS) return;
+  revealed = true;
+  clearInterval(waitTimer);
+  hideWaiting();
+  renderATS(analysisResult);
+  stepUpload.classList.remove('active');
+  stepResult.classList.add('active','fade-in');
+  pollStatus();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function hideWaiting() {
+  clearInterval(waitTimer);
+  waitSection.classList.remove('on');
+  if (uploadWrap) [...uploadWrap.children].forEach(c => { c.style.display = ''; });
   analyzeBtn.disabled = false;
 }
 
@@ -1157,23 +1282,23 @@ function setFile(f) {
 analyzeBtn.addEventListener('click', async () => {
   if (!chosenFile) { toast('Select a PDF first'); return; }
   analyzeBtn.disabled = true;
-  uploadSpin.classList.add('on');
+  showWaiting();
   const form = new FormData();
   form.append('cv', chosenFile);
   try {
     const res  = await fetch('/api/analyze-cv', { method: 'POST', body: form });
     const data = await res.json();
-    if (!res.ok) { toast(data.error || 'Analysis failed'); return; }
-    renderATS(data);
-    stepUpload.classList.remove('active');
-    stepResult.classList.add('active','fade-in');
-    pollStatus();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!res.ok) {                       // validation / rate-limit → show now
+      hideWaiting();
+      toast(data.error || 'Analysis failed');
+      return;
+    }
+    analysisResult = data;
+    analysisReady  = true;
+    maybeReveal();                       // reveal now if ≥90s already elapsed
   } catch(e) {
+    hideWaiting();
     toast('Could not reach server — please refresh the page and try again', 'error');
-  } finally {
-    analyzeBtn.disabled = false;
-    uploadSpin.classList.remove('on');
   }
 });
 
@@ -1487,8 +1612,11 @@ function renderJobs() {
     const score     = job.match_score || 0;
     const matched   = job.matched_keywords || [];
     const total     = cvKeywords.length;
-    const isBest    = total > 0 && idx === 0 && score > 0;
-    const pct       = total > 0 ? Math.round((score / total) * 100) : 0;
+    // Backend-computed weighted match (skills > title > location > recency).
+    const pct       = typeof job.match_pct === 'number'
+                        ? job.match_pct
+                        : (total > 0 ? Math.round((score / total) * 100) : 0);
+    const isBest    = idx === 0 && pct > 0;
     const mCls      = pct >= 50 ? 'match-high' : pct >= 15 ? 'match-mid' : 'match-zero';
     const barColor  = pct >= 50 ? '#5db98a' : pct >= 15 ? '#d4924a' : '#ccc8f0';
     const shown     = matched.slice(0, 4);
@@ -1496,7 +1624,7 @@ function renderJobs() {
 
     const matchRow = total > 0 ? `
       <div class="jc-match-row">
-        <span class="match-badge ${mCls}">${score} match${score !== 1 ? 'es' : ''}</span>
+        <span class="match-badge ${mCls}">Match: ${pct}%</span>
         <div class="match-bar-track">
           <div class="match-bar-fill" style="width:${pct}%;background:${barColor}"></div>
         </div>
@@ -1586,18 +1714,6 @@ function toggleSaved() {
 }
 
 /* ── Helpers ── */
-// ── Live user counter ──────────────────────────────────────────
-async function refreshStats() {
-  try {
-    const r = await fetch('/api/stats');
-    const d = await r.json();
-    const el = document.getElementById('liveCount');
-    if (el) el.textContent = d.active_users ?? '—';
-  } catch {}
-}
-refreshStats();
-setInterval(refreshStats, 30000);
-
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }

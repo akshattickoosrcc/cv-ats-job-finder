@@ -1,17 +1,38 @@
 import json
 import random
 import re
+import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from bs4 import BeautifulSoup
+from cachetools import TTLCache
 
 import db
 from companies import GREENHOUSE_COMPANIES, LEVER_COMPANIES
 
 _SCRAPE_RUNNING = False
+
+# Per (query, country) live-scrape cache — repeat searches are instant for 30 min.
+SOURCE_TIMEOUT = 8            # per-source hard timeout (seconds)
+_LIVE_CACHE = TTLCache(maxsize=128, ttl=1800)
+_LIVE_CACHE_LOCK = threading.Lock()
+
+# Related-title synonyms used to broaden a search when it returns too few hits.
+_TITLE_SYNONYMS = {
+    "developer": ["engineer", "programmer"],
+    "engineer": ["developer"],
+    "sde": ["software engineer", "developer"],
+    "ml": ["machine learning"],
+    "ai": ["artificial intelligence", "machine learning"],
+    "devops": ["sre", "platform engineer"],
+    "analyst": ["analytics", "data analyst"],
+    "pm": ["product manager"],
+    "frontend": ["front end", "ui"],
+    "backend": ["back end"],
+}
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -971,14 +992,77 @@ def _filter_by_query(jobs: list[dict], query: str) -> list[dict]:
     return [j for j in jobs if any(w in j.get("title", "").lower() for w in q_words)]
 
 
+def _dedupe(jobs: list[dict]) -> list[dict]:
+    """Drop the same posting appearing on multiple platforms (normalized
+    title + company), keeping the first occurrence."""
+    seen, out = set(), []
+    for j in jobs:
+        key = (
+            re.sub(r"[^a-z0-9]", "", (j.get("title") or "").lower()),
+            re.sub(r"[^a-z0-9]", "", (j.get("company") or "").lower()),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(j)
+    return out
+
+
+def _synonym_queries(query: str) -> list[str]:
+    """Related-title variants to broaden a thin result set."""
+    words = query.lower().split()
+    variants: list[str] = []
+    for i, w in enumerate(words):
+        for syn in _TITLE_SYNONYMS.get(w, []):
+            variants.append(" ".join(words[:i] + [syn] + words[i + 1:]))
+    # Also a broadened 2-word version of the original query.
+    meaningful = [w for w in words if len(w) > 2]
+    if len(meaningful) >= 2:
+        variants.append(" ".join(meaningful[:2]))
+    # De-dup, drop the original.
+    out, seen = [], {query.lower()}
+    for v in variants:
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _fetch_sources(sources, query: str, include_greenhouse: bool = False) -> list[dict]:
+    """Run each source concurrently with a per-source timeout; a slow/broken
+    source is skipped, never blocking the batch."""
+    raw: list[dict] = []
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futs = {ex.submit(fn, query): fn for fn in sources}
+        gh_fut = ex.submit(_greenhouse_search, query) if include_greenhouse else None
+        for fut in as_completed(futs):
+            try:
+                raw.extend(fut.result(timeout=SOURCE_TIMEOUT))
+            except Exception:
+                pass
+        if gh_fut is not None:
+            try:
+                raw.extend(gh_fut.result(timeout=SOURCE_TIMEOUT + 4))
+            except Exception:
+                pass
+    return raw
+
+
 def scrape_live(query: str, country: str = "in") -> list[dict]:
     """
-    Live scrape for a query. Always includes reliable API sources (RemoteOK,
-    WWR, Remotive, Jobicy) plus country-specific sources. All results are
-    filtered to only include jobs relevant to the query.
-    If fewer than 5 results, retries with a broader 2-word version of the query.
+    Live scrape for a query across the fast/reliable sources for the target
+    country, plus Greenhouse India. Every source runs concurrently with an
+    8s per-source timeout; slow platforms are skipped rather than blocking.
+    Results are query-filtered, de-duplicated, and (if thin) broadened with
+    related-title synonyms. Cached 30 min per (query, country).
     """
-    # Reliable API-based sources — work for all countries
+    cache_key = (query.lower().strip(), country)
+    with _LIVE_CACHE_LOCK:
+        cached = _LIVE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Reliable API-based sources — work for all countries.
     api_sources = [scrape_remoteok, scrape_wwr]
 
     if country == "uk":
@@ -994,41 +1078,22 @@ def scrape_live(query: str, country: str = "in") -> list[dict]:
     else:  # "in" or default
         html_sources = [scrape_internshala, scrape_shine]
 
-    all_sources = api_sources + html_sources
+    raw_jobs = _fetch_sources(api_sources + html_sources, query, include_greenhouse=True)
+    jobs = _dedupe(_filter_by_query(raw_jobs, query))
 
-    raw_jobs: list[dict] = []
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        futs = {ex.submit(fn, query): fn for fn in all_sources}
-        # Also search Greenhouse India jobs (most reliable real India jobs)
-        gh_fut = ex.submit(_greenhouse_search, query)
-        for fut in as_completed(futs):
-            try:
-                raw_jobs.extend(fut.result(timeout=18))
-            except Exception:
-                pass
-        try:
-            raw_jobs.extend(gh_fut.result(timeout=25))
-        except Exception:
-            pass
-
-    # Filter to only jobs relevant to the query
-    jobs = _filter_by_query(raw_jobs, query)
-
-    # Broaden search if too few results: retry with first 2 meaningful words
+    # Broaden with related titles / synonyms if the result set is thin.
     if len(jobs) < 5:
-        words = [w for w in query.lower().split() if len(w) > 2]
-        broad_query = " ".join(words[:2]) if len(words) >= 2 else words[0] if words else query
-        if broad_query != query.lower():
-            broad_raw: list[dict] = []
-            with ThreadPoolExecutor(max_workers=6) as ex:
-                futs = {ex.submit(fn, broad_query): fn for fn in api_sources}
-                for fut in as_completed(futs):
-                    try:
-                        broad_raw.extend(fut.result(timeout=18))
-                    except Exception:
-                        pass
-            broad_filtered = _filter_by_query(broad_raw, broad_query)
-            seen = {j["link"] for j in jobs}
-            jobs += [j for j in broad_filtered if j.get("link") not in seen]
+        seen = {j.get("link") for j in jobs}
+        for broad_query in _synonym_queries(query):
+            broad_raw = _fetch_sources(api_sources, broad_query)
+            for j in _filter_by_query(broad_raw, broad_query):
+                if j.get("link") not in seen:
+                    seen.add(j.get("link"))
+                    jobs.append(j)
+            if len(jobs) >= 8:
+                break
+        jobs = _dedupe(jobs)
 
+    with _LIVE_CACHE_LOCK:
+        _LIVE_CACHE[cache_key] = jobs
     return jobs
