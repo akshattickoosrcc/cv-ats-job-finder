@@ -35,20 +35,29 @@ def _scrape_and_score(field: str, cv_keywords: list, country: str) -> list[dict]
     if country != "in":
         base = [j for j in base if scrapers.detect_country(j.get("location", "")) == country]
 
-    # Job matching uses the CACHED job DB, which the worker keeps warm via its
-    # background scrape. We deliberately do NOT live-scrape inside a user's
-    # analysis: a cold cache would otherwise fire ~250 Greenhouse requests and
-    # make a single upload take 1-2 MINUTES. The ATS analysis is what the user
-    # is waiting on, and it's instant; jobs come from the warm cache. To opt
-    # back into per-analysis live scraping, set ANALYSIS_LIVE_SCRAPE=1.
-    if len(base) < 30 and os.environ.get("ANALYSIS_LIVE_SCRAPE", "0") == "1":
+    # For niche roles the cache may not cover, live-scrape the FAST query-
+    # specific sources (Internshala/Shine/RemoteOK/WWR) and merge with cache.
+    # Greenhouse is deliberately excluded here (its 250-company fan-out is what
+    # made uploads take 1-2 min) — that coverage comes from the background
+    # full-scrape instead. A hard time budget keeps this bounded so a single
+    # slow source can never blow past the target latency.
+    if len(base) < 30 and os.environ.get("ANALYSIS_LIVE_SCRAPE", "1") == "1":
+        budget = int(os.environ.get("ANALYSIS_SCRAPE_BUDGET", "9"))   # seconds
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            live = scrapers.scrape_live(field, country=country)
+            fut = ex.submit(scrapers.scrape_live, field, country)
+            live = fut.result(timeout=budget)
             db.save_jobs(live)
             seen = {j.get("link") for j in base}
             base = base + [j for j in live if j.get("link") not in seen]
+        except concurrent.futures.TimeoutError:
+            pass   # over budget — return the cache now; scrape_live finishes in
+                   # the background and caches itself, so the next hit is instant
         except Exception:
             pass
+        finally:
+            # wait=False: never block the user on a slow source past the budget
+            ex.shutdown(wait=False)
 
     deduped = _app._dedupe_jobs(base)
     jobs = []

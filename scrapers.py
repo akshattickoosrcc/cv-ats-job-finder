@@ -1049,13 +1049,18 @@ def _fetch_sources(sources, query: str, include_greenhouse: bool = False) -> lis
     return raw
 
 
-def scrape_live(query: str, country: str = "in") -> list[dict]:
+def scrape_live(query: str, country: str = "in", include_greenhouse: bool = False) -> list[dict]:
     """
     Live scrape for a query across the fast/reliable sources for the target
-    country, plus Greenhouse India. Every source runs concurrently with an
-    8s per-source timeout; slow platforms are skipped rather than blocking.
-    Results are query-filtered, de-duplicated, and (if thin) broadened with
-    related-title synonyms. Cached 30 min per (query, country).
+    country. Every source runs concurrently with a per-source timeout; slow
+    platforms are skipped rather than blocking. Results are query-filtered,
+    de-duplicated, and (if thin) broadened with related-title synonyms.
+    Cached 30 min per (query, country).
+
+    include_greenhouse defaults to FALSE: the Greenhouse search fans out to
+    ~250 company boards and takes 1-2 min, so it must never run inside a
+    user-facing request. Greenhouse/Lever coverage instead comes from the
+    worker's periodic background full-scrape, which populates the cache.
     """
     cache_key = (query.lower().strip(), country)
     with _LIVE_CACHE_LOCK:
@@ -1079,7 +1084,7 @@ def scrape_live(query: str, country: str = "in") -> list[dict]:
     else:  # "in" or default
         html_sources = [scrape_internshala, scrape_shine]
 
-    raw_jobs = _fetch_sources(api_sources + html_sources, query, include_greenhouse=True)
+    raw_jobs = _fetch_sources(api_sources + html_sources, query, include_greenhouse=include_greenhouse)
     jobs = _dedupe(_filter_by_query(raw_jobs, query))
 
     # Broaden with related titles / synonyms if the result set is thin.
