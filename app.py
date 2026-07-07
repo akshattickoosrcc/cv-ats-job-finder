@@ -1253,11 +1253,21 @@ def _ping_self():
 
 
 def _run_scrape():
-    sc = _scrapers()
-    if os.environ.get("RENDER"):
-        sc.run_render_scrape()
-    else:
-        sc.run_full_scrape()
+    """Spawn the scrape in a DETACHED subprocess so its CPU + bulk-DB work can
+    never block the single gevent web worker (which must stay responsive so the
+    site loads instantly). The subprocess writes to the same jobs.db (WAL) and
+    exits when done. run_render_scrape pulls only JSON APIs — no lxml/pdfplumber
+    — so it stays lean (~60-80 MB, transient) and safe on the 512 MB free tier."""
+    import subprocess
+    import sys
+    fn = "run_render_scrape" if os.environ.get("RENDER") else "run_full_scrape"
+    try:
+        subprocess.Popen(
+            [sys.executable, "-u", "-c", f"import scrapers; scrapers.{fn}()"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+    except Exception as e:
+        app.logger.warning("scrape subprocess failed to start: %s", e)
 
 
 def _start_scheduler():
@@ -1277,10 +1287,11 @@ def _start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    # Startup scrape after 30s so DB is populated after each deploy
+    # Startup scrape after 45s (subprocess) so the web server is fully serving
+    # requests before any scrape work begins. Populates the DB after each deploy.
     def _delayed():
         import time as _t
-        _t.sleep(30)
+        _t.sleep(45)
         _run_scrape()
     threading.Thread(target=_delayed, daemon=True).start()
 
