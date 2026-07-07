@@ -24,10 +24,12 @@ import db
 import scrapers
 
 
-def _scrape_and_score(field: str, cv_keywords: list, country: str) -> list[dict]:
-    """Live-scrape jobs for the recommended role and score them against the CV.
-    The scraper fetches all sources concurrently with an 8s per-source timeout
-    and caches results per (query, country) for 30 min (see scrapers.scrape_live)."""
+def _scrape_and_score(field: str, cv_keywords: list, country: str,
+                      user_level: str = "") -> list[dict]:
+    """Score cached (+ optionally freshly-scraped) jobs against the CV and rank
+    them, factoring in the candidate's EXPERIENCE LEVEL so a fresher isn't shown
+    director roles and a senior isn't shown internships.
+    Cached per (query, country) for 30 min (see scrapers.scrape_live)."""
     try:
         base = db.search_jobs(field, limit=400)
     except Exception:
@@ -66,8 +68,15 @@ def _scrape_and_score(field: str, cv_keywords: list, country: str) -> list[dict]
         j["country"] = scrapers.detect_country(j.get("location", ""))
         j["matched_keywords"], j["match_pct"] = _app.compute_match(j, cv_keywords, field, country)
         j["match_score"] = len(j["matched_keywords"])
+        j["level"] = _app.detect_job_level(j.get("title", ""))
+        # Seniority-aware rank score: each level of gap from the candidate costs
+        # 18 points, so aligned roles rise to the top without hiding everything.
+        pen = _app.level_penalty(user_level, j.get("title", "")) if user_level else 0
+        j["_rank"] = j["match_pct"] - 18 * pen
         jobs.append(j)
-    jobs.sort(key=lambda j: (-j["match_pct"], -j["match_score"]))
+    jobs.sort(key=lambda j: (-j["_rank"], -j["match_score"]))
+    for j in jobs:
+        j.pop("_rank", None)
     return jobs[:300]
 
 
@@ -92,7 +101,8 @@ def run_analysis(text: str, *, do_scrape: bool = True, country: str = "in") -> d
         jobs = []
         if do_scrape:
             field = recommendation.get("query") or "software engineer"
-            jobs = _scrape_and_score(field, cv_keywords, country)
+            user_level = (recommendation.get("experience") or {}).get("level", "")
+            jobs = _scrape_and_score(field, cv_keywords, country, user_level)
     result["jobs"] = jobs
 
     # Diff against last review (CV-improvement tracking) — same as before.

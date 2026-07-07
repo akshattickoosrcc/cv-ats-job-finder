@@ -901,6 +901,32 @@ def compute_match(job, cv_keywords, query, country):
     return matched, max(0, min(100, pct))
 
 
+_SENIORITY = ["fresher", "junior", "mid", "senior", "lead"]
+
+def detect_job_level(title: str) -> str | None:
+    """Infer a job's seniority from its title. None = unlabeled (treated as a
+    neutral match for any level)."""
+    t = (title or "").lower()
+    if re.search(r"\b(intern|internship|trainee|apprentice|fresher|graduate)\b", t):
+        return "fresher"
+    if re.search(r"\b(principal|staff|lead|head|vp|vice\s*president|director|chief|cxo|cto|ceo|manager|mgr)\b", t):
+        return "lead"
+    if re.search(r"\b(senior|sr\.?)\b", t):
+        return "senior"
+    if re.search(r"\b(junior|jr\.?|associate|entry[- ]?level)\b", t):
+        return "junior"
+    return None
+
+
+def level_penalty(user_level: str, job_title: str) -> int:
+    """0 = same level (or unlabeled). Grows with the seniority gap, so a fresher
+    is not shown Director roles and a senior is not shown internships."""
+    jl = detect_job_level(job_title)
+    if jl is None or user_level not in _SENIORITY:
+        return 0
+    return abs(_SENIORITY.index(user_level) - _SENIORITY.index(jl))
+
+
 def _dedupe_jobs(jobs):
     """Drop the same posting listed on multiple platforms (normalized
     title + company). Keeps the first (highest-ranked) occurrence."""
