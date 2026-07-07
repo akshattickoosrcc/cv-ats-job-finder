@@ -1261,21 +1261,14 @@ def _ping_self():
 
 
 def _run_scrape():
-    """Spawn the scrape in a DETACHED subprocess so its CPU + bulk-DB work can
-    never block the single gevent web worker (which must stay responsive so the
-    site loads instantly). The subprocess writes to the same jobs.db (WAL) and
-    exits when done. run_render_scrape pulls only JSON APIs — no lxml/pdfplumber
-    — so it stays lean (~60-80 MB, transient) and safe on the 512 MB free tier."""
-    import subprocess
-    import sys
-    fn = "run_render_scrape" if os.environ.get("RENDER") else "run_full_scrape"
-    try:
-        subprocess.Popen(
-            [sys.executable, "-u", "-c", f"import scrapers; scrapers.{fn}()"],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-        )
-    except Exception as e:
-        app.logger.warning("scrape subprocess failed to start: %s", e)
+    """Run the scrape in-process. On Render use the lightweight JSON-only path
+    (run_render_scrape) which was the fix for the earlier OOM crash — a second
+    interpreter (subprocess) loads bs4/lxml and risks OOM on the 512 MB tier."""
+    sc = _scrapers()
+    if os.environ.get("RENDER"):
+        sc.run_render_scrape()
+    else:
+        sc.run_full_scrape()
 
 
 def _start_scheduler():
