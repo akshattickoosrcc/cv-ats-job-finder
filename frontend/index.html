@@ -81,6 +81,35 @@
     }
     .header-right { display: flex; align-items: center; gap: .75rem; }
 
+    /* Live "online now" pill */
+    .online-wrap {
+      display: none;               /* shown by JS once a count arrives */
+      align-items: center;
+      gap: .4rem;
+      padding: .3rem .7rem;
+      background: var(--success-light);
+      border: 1px solid #bbf7d0;
+      border-radius: 999px;
+      font-size: .76rem;
+      font-weight: 600;
+      color: var(--success);
+      white-space: nowrap;
+    }
+    .online-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      flex-shrink: 0;
+      box-shadow: 0 0 0 0 rgba(22,163,74,.6);
+      animation: onlinePulse 1.8s infinite;
+    }
+    @keyframes onlinePulse {
+      0%   { box-shadow: 0 0 0 0 rgba(22,163,74,.5); }
+      70%  { box-shadow: 0 0 0 6px rgba(22,163,74,0); }
+      100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
+    }
+    @media (max-width: 560px) { .header-tagline { display: none; } }
+
     /* ── Main wrapper ── */
     main { max-width: 960px; margin: 3rem auto 6rem; padding: 0 1.5rem; }
 
@@ -763,6 +792,10 @@
   </div>
   <div class="header-right">
     <span class="header-tagline">ATS scoring · Domain intelligence · Job search</span>
+    <div class="online-wrap" id="online-wrap" title="People using the site right now">
+      <span class="online-dot"></span>
+      <span><strong id="online-count">1</strong> online now</span>
+    </div>
   </div>
 </header>
 
@@ -1088,6 +1121,31 @@ const api = path => API_BASE + path;
 /* Warm the backend the instant the page loads, so it's ready by the time the
    visitor has picked a file. Fire-and-forget — the landing page never waits. */
 function warmBackend() { fetch(api('/health'), { mode: 'cors' }).catch(() => {}); }
+
+/* ── Live "online now" counter ─────────────────────────────────────
+   A per-tab random id heartbeats every 15s; the backend returns how many
+   visitors it has seen in the last 30s. Purely cosmetic — failures are
+   swallowed so it never affects the core flow. */
+const VISITOR_ID = (() => {
+  let v = sessionStorage.getItem('cv_vid');
+  if (!v) {
+    v = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
+    sessionStorage.setItem('cv_vid', v);
+  }
+  return v;
+})();
+async function pingOnline() {
+  try {
+    const r = await fetch(api('/api/online?v=' + encodeURIComponent(VISITOR_ID)), { mode: 'cors' });
+    const d = await r.json();
+    if (d && d.online) {
+      const c = document.getElementById('online-count');
+      const w = document.getElementById('online-wrap');
+      if (c) c.textContent = d.online;
+      if (w) w.style.display = 'inline-flex';
+    }
+  } catch {}
+}
 
 /* ── State ── */
 let allJobs         = [];
@@ -1782,6 +1840,8 @@ recSearchBtn.addEventListener('click', () => {
 
 /* ── Boot ── */
 pollStatus();          // hides the old admin status bar
-warmBackend();         // wake the backend the moment a visitor lands</script>
+warmBackend();         // wake the backend the moment a visitor lands
+pingOnline();          // show the live "online now" count immediately…
+setInterval(pingOnline, 15000);   // …and keep it fresh every 15s</script>
 </body>
 </html>

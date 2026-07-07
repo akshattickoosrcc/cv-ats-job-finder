@@ -1200,6 +1200,46 @@ def ping():
     return jsonify({"ok": True})
 
 
+# ── "Currently online" presence counter ───────────────────────────
+# Each visitor's browser heartbeats every ~15s with a random id. We keep a
+# Redis sorted set of id -> last-seen and count entries seen in the last
+# PRESENCE_WINDOW seconds. Shared across all gunicorn workers via Redis; falls
+# back to an in-process count for local dev.
+PRESENCE_WINDOW  = 30            # seconds a visitor counts as "online"
+_presence_local  = {}           # dev fallback only: vid -> last_seen
+_presence_lock   = threading.Lock()
+_PRESENCE_KEY    = "online:presence"
+
+
+def _online_count(vid: str) -> int:
+    now = time.time()
+    q = get_queue()
+    if hasattr(q, "r"):
+        try:
+            pipe = q.r.pipeline()
+            pipe.zadd(_PRESENCE_KEY, {vid: now})
+            pipe.zremrangebyscore(_PRESENCE_KEY, 0, now - PRESENCE_WINDOW)
+            pipe.zcard(_PRESENCE_KEY)
+            pipe.expire(_PRESENCE_KEY, PRESENCE_WINDOW * 3)
+            return int(pipe.execute()[2])
+        except Exception:
+            return 1
+    with _presence_lock:
+        _presence_local[vid] = now
+        cutoff = now - PRESENCE_WINDOW
+        for k in [k for k, t in _presence_local.items() if t < cutoff]:
+            _presence_local.pop(k, None)
+        return len(_presence_local)
+
+
+@app.route("/api/online")
+@limiter.limit("240 per minute")
+def online_route():
+    """Heartbeat + live visitor count. Called every ~15s by each open tab."""
+    vid = (request.args.get("v") or get_remote_address() or "anon")[:64]
+    return jsonify({"online": max(1, _online_count(vid))})
+
+
 # The web process is now PURE API — no scraping/scheduler runs here. The worker
 # (worker.py) owns all heavy work: per-job scraping + a periodic cache refresh.
 db.init_db()
