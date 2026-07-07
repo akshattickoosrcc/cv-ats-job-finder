@@ -15,6 +15,7 @@ Profiling on a typical 2-page CV:
 from __future__ import annotations
 
 import concurrent.futures
+import os
 
 # Importing app pulls in the analysis functions. No server / scheduler starts
 # on import (that only happens in wsgi.py / __main__), so this is safe here.
@@ -34,7 +35,13 @@ def _scrape_and_score(field: str, cv_keywords: list, country: str) -> list[dict]
     if country != "in":
         base = [j for j in base if scrapers.detect_country(j.get("location", "")) == country]
 
-    if len(base) < 30:
+    # Job matching uses the CACHED job DB, which the worker keeps warm via its
+    # background scrape. We deliberately do NOT live-scrape inside a user's
+    # analysis: a cold cache would otherwise fire ~250 Greenhouse requests and
+    # make a single upload take 1-2 MINUTES. The ATS analysis is what the user
+    # is waiting on, and it's instant; jobs come from the warm cache. To opt
+    # back into per-analysis live scraping, set ANALYSIS_LIVE_SCRAPE=1.
+    if len(base) < 30 and os.environ.get("ANALYSIS_LIVE_SCRAPE", "0") == "1":
         try:
             live = scrapers.scrape_live(field, country=country)
             db.save_jobs(live)
