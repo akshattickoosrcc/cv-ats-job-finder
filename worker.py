@@ -143,12 +143,35 @@ def _recover_stale_running(q) -> None:
 
 def main():
     q = get_queue()
-    log.info("worker started (queue=%s)", type(q).__name__)
+    concurrency = max(1, int(os.environ.get("WORKER_CONCURRENCY", "3")))
+    log.info("worker started (queue=%s, concurrency=%d)", type(q).__name__, concurrency)
     _recover_stale_running(q)
     threading.Thread(target=_heartbeat_loop, args=(q,), daemon=True).start()
     if os.environ.get("WORKER_SCRAPE", "1") == "1":
         threading.Thread(target=_scrape_loop, daemon=True).start()
 
+    # Run N consumer threads so many uploads process IN PARALLEL instead of
+    # queueing behind one. A single job is ~1s (cache) to ~9s (niche live
+    # scrape) and is I/O-bound (subprocess parse + network scrape), so threads
+    # give real parallelism here. This is what stops a burst of 20 evening
+    # users from waiting single-file behind each other.
+    consumers = [
+        threading.Thread(target=_consume_loop, args=(q,), daemon=True)
+        for _ in range(concurrency)
+    ]
+    for t in consumers:
+        t.start()
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        log.info("worker stopping")
+
+
+def _consume_loop(q) -> None:
+    """One consumer: pull a job, process it, repeat. Multiple of these run
+    concurrently (WORKER_CONCURRENCY). Redis BLPOP / the SQLite claim-update
+    are atomic, so no two consumers ever grab the same job."""
     while True:
         try:
             item = q.dequeue(timeout=5)
@@ -160,10 +183,9 @@ def main():
             log.info("picked up job %s", job_id)
             _process(q, job_id, payload)
         except KeyboardInterrupt:
-            log.info("worker stopping")
             break
         except Exception as e:
-            log.error("worker loop error: %s", e)
+            log.error("consumer loop error: %s", e)
             time.sleep(1)
 
 

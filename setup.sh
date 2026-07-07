@@ -91,6 +91,8 @@ PORT=$PORT
 # 2 workers on a 1 GB box: each Flask worker ~100 MB, leaves room for Redis + worker
 WEB_WORKERS=2
 WEB_THREADS=8
+# Process this many CV analyses IN PARALLEL so bursts don't queue single-file.
+WORKER_CONCURRENCY=3
 MAX_QUEUE_DEPTH=40
 PARSE_TIMEOUT=25
 PARSE_MEM_LIMIT_MB=400
@@ -166,6 +168,10 @@ server {
 
     location / {
         try_files \$uri \$uri/ /index.html;
+        # Never cache the app shell — always serve the latest frontend so a
+        # deploy takes effect immediately (no stale "old slow page" for users).
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
     }
 
     # API + health → gunicorn (all heavy work lives here)
