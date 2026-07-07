@@ -1,7 +1,6 @@
-import db
+"""WSGI entrypoint for the web API (gunicorn wsgi:app).
 
-db.init_db()
-
-from app import app, _start_scheduler  # noqa: E402
-
-_start_scheduler()
+The web process is pure API now — no scheduler / scraping runs here. All heavy
+work lives in worker.py. db.init_db() runs on importing app.
+"""
+from app import app  # noqa: F401

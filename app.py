@@ -3,6 +3,8 @@ import io
 import os
 import re
 import threading
+import time
+import uuid
 from datetime import datetime, timezone
 
 import requests as _requests
@@ -14,24 +16,41 @@ from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import db
+# PDF validation lives in a shared module (used before enqueue; no Flask dep).
+from pdfvalidate import PdfRejected, validate_pdf, MAX_PDF_BYTES, MAX_PDF_PAGES
+from taskqueue import get_queue
+
 # Lazy-load scrapers — BeautifulSoup/lxml/requests are heavy; don't load at boot
 def _scrapers():
     import scrapers as _s
     return _s
 
-# ── Upload hardening limits ───────────────────────────────────────
-MAX_PDF_BYTES  = 2 * 1024 * 1024   # 2 MB hard cap
-MAX_PDF_PAGES  = 3                 # CV must be ≤ 3 pages
-MAX_TEXT_BYTES = 500 * 1024        # abort text extraction past 500 KB
-PARSE_TIMEOUT  = 20                # seconds — kill a runaway parse
+# ── Upload / queue config ─────────────────────────────────────────
+UPLOAD_DIR      = os.environ.get("UPLOAD_DIR", os.path.join(
+    os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__))), "uploads"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+MAX_QUEUE_DEPTH = int(os.environ.get("MAX_QUEUE_DEPTH", "40"))   # soft cap for "high demand"
+WORKER_STALE_S  = int(os.environ.get("WORKER_STALE_SECONDS", "120"))
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_PDF_BYTES
 app.secret_key = os.environ.get("SECRET_KEY", "cvfinder-dev-key-change-in-prod")
 
-# Behind Render's proxy: trust exactly ONE forwarded hop so get_remote_address
-# (rate-limiting + per-IP guards) sees the real client IP, not the proxy's.
+# Behind a proxy (Render / nginx): trust exactly ONE forwarded hop so
+# get_remote_address (rate-limiting + per-IP guards) sees the real client IP.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# ── CORS: allow only the configured static frontend origin(s) ─────
+# FRONTEND_ORIGIN is a comma-separated list, e.g.
+#   "https://cvfinder.vercel.app,https://www.cvfinder.com"
+try:
+    from flask_cors import CORS
+    _origins = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "*").split(",") if o.strip()]
+    CORS(app, resources={r"/api/*": {"origins": _origins},
+                         r"/health": {"origins": _origins}},
+         supports_credentials=False, max_age=86400)
+except Exception:
+    pass  # flask-cors optional in local/dev
 
 # ── Payment ingest token: kept stable across restarts so the phone-side ──
 # ── SMS-forwarding setup only needs to be entered once.                  ──
@@ -47,9 +66,10 @@ limiter = Limiter(
 _job_cache        = TTLCache(maxsize=64, ttl=120)    # cache job searches 2 min
 _job_cache_lock   = threading.Lock()
 
-# Per-IP in-progress upload guard: one analysis at a time per client IP.
-_uploads_in_progress: set[str] = set()
-_uploads_lock       = threading.Lock()
+# Per-IP guard: one analysis IN FLIGHT per client IP. Maps ip -> job_id while
+# that job is queued/running (TTL auto-clears if a job is abandoned).
+_ip_active_job    = TTLCache(maxsize=10000, ttl=600)
+_ip_lock          = threading.Lock()
 
 # ─────────────────────── ATS keyword data ────────────────────────
 
@@ -117,130 +137,8 @@ JOB_TITLE_TERMS = [
     "business development", "operations manager", "research analyst",
 ]
 
-# ─────────────────────── PDF parsing ─────────────────────────────
-
-class PdfRejected(Exception):
-    """Raised when an uploaded PDF fails a safety/validation check.
-    The message is safe to show the user."""
-
-
-def _has_embedded_files(reader) -> bool:
-    """True if the PDF carries embedded files / attachments (a common
-    malware / data-exfiltration vector — we only ever want plain text)."""
-    try:
-        root = reader.trailer["/Root"]
-        names = root.get("/Names")
-        if names and names.get("/EmbeddedFiles"):
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def validate_pdf(raw: bytes) -> None:
-    """Reject non-PDFs, oversized, encrypted, over-length, or booby-trapped
-    files BEFORE any heavy parsing. Raises PdfRejected with a user-safe message."""
-    # 1) Genuine PDF by magic bytes — not extension or Content-Type.
-    if not raw[:5] == b"%PDF-":
-        raise PdfRejected("That doesn't look like a valid PDF file.")
-
-    # 2) Hard size cap (belt-and-suspenders with MAX_CONTENT_LENGTH).
-    if len(raw) > MAX_PDF_BYTES:
-        raise PdfRejected("File too large — please upload a CV under 2 MB.")
-
-    from pypdf import PdfReader
-    try:
-        reader = PdfReader(io.BytesIO(raw))
-    except Exception:
-        raise PdfRejected("This file could not be processed.")
-
-    # 3) No encrypted / password-protected PDFs.
-    if getattr(reader, "is_encrypted", False):
-        raise PdfRejected("Password-protected PDFs aren't supported — please upload an unlocked CV.")
-
-    # 4) Page count — checked lazily, before extracting any text.
-    try:
-        num_pages = len(reader.pages)
-    except Exception:
-        raise PdfRejected("This file could not be processed.")
-    if num_pages == 0:
-        raise PdfRejected("This file could not be processed.")
-    if num_pages > MAX_PDF_PAGES:
-        raise PdfRejected("Please upload a CV of maximum 3 pages.")
-
-    # 5) No embedded files / attachments.
-    if _has_embedded_files(reader):
-        raise PdfRejected("This file could not be processed.")
-
-
-def _extract_with_pdfplumber(raw: bytes) -> str:
-    """Primary extractor. Plain-text-only — never executes JS or resolves
-    external references. Aborts past MAX_TEXT_BYTES (decompression-bomb guard)."""
-    import pdfplumber
-    parts: list[str] = []
-    total = 0
-    with pdfplumber.open(io.BytesIO(raw)) as pdf:
-        for page in pdf.pages[:MAX_PDF_PAGES]:
-            txt = page.extract_text() or ""
-            total += len(txt.encode("utf-8", "ignore"))
-            parts.append(txt)
-            if total > MAX_TEXT_BYTES:
-                raise PdfRejected("This file could not be processed.")
-    return "\n".join(parts).strip()
-
-
-def _extract_with_pypdf(raw: bytes) -> str:
-    """Fallback extractor for PDFs that pdfplumber chokes on (unusual fonts,
-    CMaps, or producers). Same plain-text-only, capped behaviour."""
-    from pypdf import PdfReader
-    reader = PdfReader(io.BytesIO(raw))
-    parts: list[str] = []
-    total = 0
-    for page in reader.pages[:MAX_PDF_PAGES]:
-        txt = page.extract_text() or ""
-        total += len(txt.encode("utf-8", "ignore"))
-        parts.append(txt)
-        if total > MAX_TEXT_BYTES:
-            raise PdfRejected("This file could not be processed.")
-    return "\n".join(parts).strip()
-
-
-def _extract_text(raw: bytes) -> str:
-    """Try pdfplumber, then fall back to pypdf if it errors on a quirky file.
-    Only if BOTH extractors fail do we give up."""
-    try:
-        return _extract_with_pdfplumber(raw)
-    except PdfRejected:
-        raise
-    except Exception as e:
-        app.logger.warning("pdfplumber failed, trying pypdf: %s", e)
-        try:
-            return _extract_with_pypdf(raw)
-        except PdfRejected:
-            raise
-        except Exception as e2:
-            app.logger.warning("pypdf fallback also failed: %s", e2)
-            raise PdfRejected(
-                "We couldn't read the text from this PDF. Try re-exporting or "
-                "'Print to PDF' and upload again."
-            )
-
-
-def parse_cv_text(raw: bytes) -> str:
-    """Validate then extract, with a hard wall-clock parse timeout so a
-    malicious/pathological file can't pin the worker. Bounded by the 2 MB
-    input cap, 2-page cap and 500 KB text cap so memory stays flat.
-
-    The executor is created per-call (not at import) so it lives inside the
-    gevent-patched gunicorn worker rather than the pre-fork master process."""
-    validate_pdf(raw)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        fut = pool.submit(_extract_text, raw)
-        try:
-            return fut.result(timeout=PARSE_TIMEOUT)
-        except concurrent.futures.TimeoutError:
-            raise PdfRejected("This file could not be processed.")
-
+# PDF validation (validate_pdf, PdfRejected) is imported from pdfvalidate.
+# Text extraction runs in the worker's memory-capped subprocess (pdftext.py).
 
 # ─────────────────────── ATS analysis ────────────────────────────
 
@@ -1047,14 +945,36 @@ def payload_too_large(e):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    # This service is now a pure JSON API; the UI is the static Vercel frontend.
+    return jsonify({
+        "service": "cv-ats-job-finder API",
+        "status": "ok",
+        "endpoints": ["/api/analyze", "/api/status/<id>", "/api/results/<id>",
+                      "/api/search-jobs", "/api/match-jd", "/health"],
+    })
 
 
 
+_VALID_COUNTRIES = {"in", "us", "uk", "eu", "au", "remote"}
 
-@app.route("/api/analyze-cv", methods=["POST"])
+
+def _ip_has_active_job(client_ip: str) -> bool:
+    """True if this IP already has a queued/running job (1 analysis per IP)."""
+    with _ip_lock:
+        jid = _ip_active_job.get(client_ip)
+    if not jid:
+        return False
+    st = get_queue().get_status(jid).get("status")
+    return st in ("queued", "running")
+
+
+@app.route("/api/analyze", methods=["POST"])
+@app.route("/api/analyze-cv", methods=["POST"])          # legacy alias
 @limiter.limit("10 per minute")
 def analyze_cv_route():
+    """Validate the upload (fast), store it, ENQUEUE an analysis job, and return
+    a job_id immediately. All heavy work (parse + scrape + score) runs in the
+    worker. Target: < 2s response."""
     # Only 1 file per request — reject multi-file uploads outright.
     files = request.files.getlist("cv")
     if not files:
@@ -1067,234 +987,158 @@ def analyze_cv_route():
     if not f.filename.lower().endswith(".pdf"):
         return jsonify({"error": "Only PDF files are supported"}), 400
 
-    # One analysis in flight per client IP.
     client_ip = get_remote_address()
-    with _uploads_lock:
-        if client_ip in _uploads_in_progress:
-            return jsonify({
-                "error": "You already have an analysis in progress. Please wait for your results."
-            }), 429
-        _uploads_in_progress.add(client_ip)
+    if _ip_has_active_job(client_ip):
+        return jsonify({
+            "error": "You already have an analysis in progress. Please wait for your results."
+        }), 429
 
+    raw = f.read()
+    if len(raw) > MAX_PDF_BYTES:
+        return jsonify({"error": "File too large — please upload a CV under 2 MB."}), 400
+
+    # Full validation BEFORE enqueue (magic bytes, pages, encryption, embedded).
     try:
-        raw = f.read()
-        # Manual size check — MAX_CONTENT_LENGTH already 413s, this is a fallback.
-        if len(raw) > MAX_PDF_BYTES:
-            return jsonify({"error": "File too large — please upload a CV under 2 MB."}), 400
+        validate_pdf(raw)
+    except PdfRejected as pe:
+        return jsonify({"error": str(pe)}), 400
 
-        try:
-            text = parse_cv_text(raw)          # validates + extracts (bounded)
-        except PdfRejected as pe:
-            return jsonify({"error": str(pe)}), 400
+    country = (request.form.get("country") or "in").strip().lower()
+    if country not in _VALID_COUNTRIES:
+        country = "in"
 
-        if not text.strip():
-            return jsonify({"error": "Could not extract text — is the PDF a scanned image?"}), 400
+    q = get_queue()
+    depth = q.depth()
 
-        result      = analyze_ats(text)
-        cv_keywords = extract_cv_keywords(text)
-        result["cv_keywords"] = cv_keywords
-
-        # ── Diff against last review ──
-        last = db.get_last_ats_review()
-        if last:
-            prev_score  = last["score"]
-            prev_issues = set(last["issues"])
-            curr_issues = set(result["issues"])
-            result["prev_score"]     = prev_score
-            result["score_delta"]    = result["score"] - prev_score
-            result["fixed_issues"]   = sorted(prev_issues - curr_issues)
-            result["new_issues"]     = sorted(curr_issues - prev_issues)
-            result["persisted_issues"] = sorted(curr_issues & prev_issues)
-            result["has_prev_review"] = True
-        else:
-            result["has_prev_review"] = False
-
-        # Smart job recommendation
-        result["recommendation"] = derive_recommended_query(text, cv_keywords)
-
-        # Cache CV text for JD matching — stored in signed session cookie (per-user)
-        session["cv_text"]     = text
-        session["cv_keywords"] = cv_keywords
-
-        # Persist this review as the new baseline
-        db.save_ats_review(
-            result["score"], result["word_count"],
-            result["issues"], result["suggestions"], cv_keywords
-        )
-        return jsonify(result)
+    # Store the file with a server-generated UUID name (never the user's name).
+    pdf_path = os.path.join(UPLOAD_DIR, uuid.uuid4().hex + ".pdf")
+    try:
+        with open(pdf_path, "wb") as out:
+            out.write(raw)
+        job_id = q.enqueue({"pdf_path": pdf_path, "country": country})
     except Exception as e:
-        app.logger.error("CV analysis error: %s", e, exc_info=True)
-        return jsonify({"error": "CV processing failed — please try again"}), 500
-    finally:
-        # Always release the per-IP guard, success or failure.
-        with _uploads_lock:
-            _uploads_in_progress.discard(client_ip)
+        app.logger.error("enqueue failed: %s", e, exc_info=True)
+        try:
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+        except Exception:
+            pass
+        return jsonify({"error": "Could not start analysis — please try again"}), 503
+
+    with _ip_lock:
+        _ip_active_job[client_ip] = job_id
+
+    resp = {"job_id": job_id, "status": "queued"}
+    # Friendly high-demand message with queue position during a burst.
+    if depth >= MAX_QUEUE_DEPTH:
+        pos = q.position(job_id)
+        resp["high_demand"] = True
+        resp["position"] = pos
+        resp["message"] = f"High demand right now — you're #{pos} in the queue. Hang tight!"
+    return jsonify(resp), 202
+
+
+@app.route("/api/status/<job_id>")
+@limiter.limit("120 per minute")
+def status_route(job_id):
+    """Poll target. Returns {status: queued|running|done|failed|unknown, ...}."""
+    st = get_queue().get_status(job_id)
+    return jsonify(st)
+
+
+@app.route("/api/results/<job_id>")
+@limiter.limit("60 per minute")
+def results_route(job_id):
+    """Fetch the finished result. 202 while pending, 500 on failure."""
+    q = get_queue()
+    res = q.get_result(job_id)
+    if res is None:
+        st = q.get_status(job_id)
+        if st.get("status") == "failed":
+            return jsonify({"error": st.get("error", "Something went wrong — please re-upload")}), 500
+        return jsonify({"status": st.get("status", "pending")}), 202
+    # Never ship the raw CV text to the client — JD matching uses it server-side.
+    public = {k: v for k, v in res.items() if k != "cv_text"}
+    return jsonify(public)
 
 
 @app.route("/api/search-jobs", methods=["POST"])
 @limiter.limit("30 per minute")
 def search_jobs_route():
+    """Job search for the results page. Reads the cached job DB ONLY — no live
+    scraping in the web process (that keeps every request cheap under bursts).
+    The worker keeps the job DB warm via its periodic scrape + per-analysis
+    scrapes, so this stays fast and safe for 100 concurrent users."""
     data          = request.get_json() or {}
     field         = (data.get("field") or "").strip()
     cv_keywords   = data.get("cv_keywords", [])
     source_filter = (data.get("source") or "").strip()
     if not field:
         return jsonify({"error": "Please enter a job field"}), 400
-
     if len(field) > 200:
         return jsonify({"error": "Search field too long"}), 400
 
-    _VALID_COUNTRIES = {"in", "us", "uk", "eu", "au", "remote"}
     country = (data.get("country") or "in").strip().lower()
     if country not in _VALID_COUNTRIES:
         country = "in"
 
-    cache_key     = f"{field.lower()}|{source_filter.lower()}|{country}"
-    with _job_cache_lock:
-        base_jobs = _job_cache.get(cache_key)
-
-    if base_jobs is None:
-        sc = _scrapers()
-        base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
-        if country != "in":
-            base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
-
-        if len(base_jobs) < 30:
-            live_jobs = sc.scrape_live(field, country=country)
-            db.save_jobs(live_jobs)
-            # Merge live results directly — don't re-query DB which loses relevant live jobs
-            seen_links = {j.get("link") for j in base_jobs}
-            base_jobs = base_jobs + [j for j in live_jobs if j.get("link") not in seen_links]
-
-        # Fallback: country-specific scrape blocked → show remote jobs
-        if len(base_jobs) == 0 and country not in ("in", "remote"):
-            remote_jobs = sc.scrape_live(field, country="remote")
-            db.save_jobs(remote_jobs)
-            base_jobs = remote_jobs
-
-        with _job_cache_lock:
-            _job_cache[cache_key] = base_jobs
-
     sc = _scrapers()
-    # Dedupe the same posting listed across multiple platforms first.
-    deduped = _dedupe_jobs(base_jobs)
+    base_jobs = db.search_jobs(field, source=source_filter or None, limit=600)
+    if country != "in":
+        base_jobs = [j for j in base_jobs if sc.detect_country(j.get("location", "")) == country]
 
+    deduped = _dedupe_jobs(base_jobs)
     jobs = []
     for job in deduped:
         j = dict(job)
         j["country"] = sc.detect_country(j.get("location", ""))
         j["matched_keywords"], j["match_pct"] = compute_match(j, cv_keywords, field, country)
-        j["match_score"] = len(j["matched_keywords"])   # kept for backward compat
+        j["match_score"] = len(j["matched_keywords"])
         jobs.append(j)
-
-    # Sort by weighted match, then keyword count as a tiebreaker.
     jobs.sort(key=lambda j: (-j["match_pct"], -j["match_score"]))
 
     return jsonify({
-        "jobs":        jobs[:300],
-        "total":       len(jobs),
-        "live_scraped": False,
-        "cached":      True,
-        "country":     country,
-        "fallback_remote": len(jobs) > 0 and country not in ("in", "remote") and not any(
-            _scrapers().detect_country(j.get("location", "")) == country for j in jobs[:5]
-        ),
+        "jobs":    jobs[:300],
+        "total":   len(jobs),
+        "cached":  True,
+        "country": country,
     })
 
 
 @app.route("/api/match-jd", methods=["POST"])
 @limiter.limit("15 per minute")
 def match_jd_route():
+    """JD matching. cv_text is looked up server-side from the stored job result
+    (via job_id) so it never travels to the client."""
     data    = request.get_json() or {}
     jd_text = (data.get("jd_text") or "").strip()
+    job_id  = (data.get("job_id") or "").strip()
     if not jd_text:
         return jsonify({"error": "Paste a job description first"}), 400
-    cv_text = session.get("cv_text", "")
-    cv_kws  = session.get("cv_keywords", [])
-    if not cv_text:
+    res = get_queue().get_result(job_id) if job_id else None
+    if not res or not res.get("cv_text"):
         return jsonify({"error": "Upload and analyze your CV first"}), 400
-    result = match_jd(cv_text, jd_text, cv_kws)
+    result = match_jd(res["cv_text"], jd_text, res.get("cv_keywords", []))
     return jsonify(result)
 
 
-@app.route("/api/scrape-status")
-def scrape_status():
-    last = db.get_last_scrape()
+@app.route("/health")
+def health():
+    """Liveness + readiness. Checks queue reachability and worker freshness
+    (worker writes a heartbeat every 30s; stale after WORKER_STALE_SECONDS)."""
+    q = get_queue()
+    queue_ok = q.ping()
+    hb = q.last_heartbeat() if queue_ok else None
+    worker_ok = hb is not None and (time.time() - hb) < WORKER_STALE_S
+    ok = queue_ok and worker_ok
     return jsonify({
-        "running":    _scrapers().is_scrape_running(),
-        "total_jobs": db.total_jobs(),
-        "last_scrape": last,
-    })
-
-
-@app.route("/api/scrape-now", methods=["POST"])
-def scrape_now():
-    # Require secret key to prevent unauthenticated scrape triggers (OOM DoS vector)
-    body = request.get_json(silent=True, force=True) or {}
-    token = request.headers.get("X-Admin-Token") or body.get("token", "")
-    if token != app.secret_key:
-        return jsonify({"error": "Unauthorized"}), 403
-    if _scrapers().is_scrape_running():
-        return jsonify({"message": "Scrape already in progress"}), 202
-    threading.Thread(target=_scrapers().run_full_scrape, daemon=True).start()
-    return jsonify({"message": "Full scrape started in background"})
-
-
-# ─────────────────────── Scheduler ───────────────────────────────
-
-def _ping_self():
-    """Keep Render free tier awake by pinging own /api/ping every 10 minutes.
-    Uses the URL/hostname Render injects for THIS service so the ping always
-    lands on the live instance (a wrong URL = spin-downs = cold-start delays)."""
-    url = os.environ.get("RENDER_EXTERNAL_URL", "")
-    if not url:
-        host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
-        if host:
-            url = f"https://{host}"
-    if not url:
-        return
-    try:
-        r = _requests.get(f"{url}/api/ping", timeout=10)
-        app.logger.info("keep-alive ping %s/api/ping -> %s", url, r.status_code)
-    except Exception as e:
-        app.logger.warning("keep-alive ping failed: %s", e)
-
-
-def _run_scrape():
-    """Run the scrape in-process. On Render use the lightweight JSON-only path
-    (run_render_scrape) which was the fix for the earlier OOM crash — a second
-    interpreter (subprocess) loads bs4/lxml and risks OOM on the 512 MB tier."""
-    sc = _scrapers()
-    if os.environ.get("RENDER"):
-        sc.run_render_scrape()
-    else:
-        sc.run_full_scrape()
-
-
-def _start_scheduler():
-    scheduler = BackgroundScheduler(timezone="UTC")
-    scheduler.add_job(
-        _run_scrape,
-        trigger="interval",
-        hours=6,
-        id="daily_scrape",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _ping_self,
-        trigger="interval",
-        minutes=10,
-        id="keep_alive",
-        replace_existing=True,
-    )
-    scheduler.start()
-    # Startup scrape after 45s (subprocess) so the web server is fully serving
-    # requests before any scrape work begins. Populates the DB after each deploy.
-    def _delayed():
-        import time as _t
-        _t.sleep(45)
-        _run_scrape()
-    threading.Thread(target=_delayed, daemon=True).start()
+        "status":              "ok" if ok else "degraded",
+        "web":                 True,
+        "queue":               queue_ok,
+        "worker":              worker_ok,
+        "worker_last_seen_s":  round(time.time() - hb, 1) if hb else None,
+        "queue_depth":         q.depth() if queue_ok else None,
+    }), (200 if ok else 503)
 
 
 @app.route("/api/ping")
@@ -1302,8 +1146,11 @@ def ping():
     return jsonify({"ok": True})
 
 
+# The web process is now PURE API — no scraping/scheduler runs here. The worker
+# (worker.py) owns all heavy work: per-job scraping + a periodic cache refresh.
+db.init_db()
+
 if __name__ == "__main__":
-    db.init_db()
-    _start_scheduler()
+    # Local dev of the API only (production uses gunicorn via the Procfile).
     port = int(os.environ.get("PORT", 5001))
     app.run(debug=False, port=port, host="0.0.0.0")

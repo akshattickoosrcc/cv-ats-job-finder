@@ -8,3 +8,4 @@ venv/
 *.db-shm
 *.log
 .env
+uploads/
