@@ -818,7 +818,7 @@
           <span class="wait-pct" id="wait-pct">0%</span>
         </div>
         <h3 class="wait-title" id="wait-title">Analyzing your CV…</h3>
-        <p class="wait-msg" id="wait-msg">Your CV is being checked. For the best results, this takes about a minute — please don't close this tab.</p>
+        <p class="wait-msg" id="wait-msg">Analyzing your CV…</p>
         <ul class="wait-steps" id="wait-steps">
           <li data-step="0"><span class="ws-dot"></span>Scanning your CV structure</li>
           <li data-step="1"><span class="ws-dot"></span>Checking ATS compatibility</li>
@@ -1183,12 +1183,13 @@ function setFile(f) {
 }
 
 /* ── Waiting experience ──────────────────────────────────────────
-   Results are always held for a minimum of 90s so the analysis feels
-   thorough. A ticking progress ring + rotating steps keep it alive, and
-   if the backend is still working at 60s we switch to a "high traffic"
-   message. Validation errors bypass the wait and surface immediately. */
-const MIN_WAIT_MS  = 90000;   // hold successful results for ≥ 90s
-const BUSY_MS      = 60000;   // "high traffic" message after 60s real time
+   The backend now returns in ~1-3s, so we show results as soon as they're
+   ready. A short minimum keeps the progress animation from flashing by too
+   fast to read; the real wait is whatever the analysis actually takes.
+   If the backend is genuinely still working past BUSY_MS we show a
+   "high traffic" note. Validation errors bypass the wait entirely. */
+const MIN_WAIT_MS  = 2500;    // brief, just so the animation is readable
+const BUSY_MS      = 15000;   // "high traffic" note only if genuinely slow
 const WAIT_STEPS   = 4;
 let waitTimer = null, waitStart = 0;
 let analysisResult = null, analysisReady = false, revealed = false;
@@ -1201,7 +1202,7 @@ function showWaiting() {
   }
   waitSection.classList.add('on');
   $('wait-msg').classList.remove('busy');
-  $('wait-msg').textContent = "Your CV is being checked. For the best results, this takes about a minute — please don't close this tab.";
+  $('wait-msg').textContent = "Analyzing your CV…";
   document.querySelectorAll('#wait-steps li').forEach(li => li.classList.remove('active','done'));
   clearInterval(waitTimer);
   waitTimer = setInterval(tickWaiting, 200);
