@@ -98,6 +98,8 @@ WORKER_STALE_SECONDS=120
 WORKER_SCRAPE=1
 SCRAPE_MODE=full
 PDF_EXTRACTOR=pymupdf
+# Faster analysis: cap each job-source scrape at 6s so results land in ~3-5s
+SOURCE_TIMEOUT=6
 EOF
 chown "$APP_USER:$APP_USER" "$APP_DIR/.env"
 chmod 600 "$APP_DIR/.env"

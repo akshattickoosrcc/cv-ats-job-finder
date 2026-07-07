@@ -1272,8 +1272,8 @@ async function enqueueWithWarmup(form) {
       return { ok: true, data: await res.json() };
     } catch (e) {
       if (attempt === maxAttempts) throw e;
-      setWaitMessage("Warming up the engine… this only happens on the first visit.", true);
-      await sleep(4000);                 // backend booting; retry
+      setWaitMessage("Analyzing your CV…", true);
+      await sleep(2000);                 // transient hiccup; quick retry
     }
   }
 }
@@ -1287,8 +1287,10 @@ function setWaitMessage(msg, busy) {
 
 async function pollJob(jobId) {
   const started = Date.now();
-  while (Date.now() - started < 5 * 60 * 1000) {         // give up after 5 min
-    await sleep(5000);
+  // Poll fast (1.5s) so results appear the instant the worker finishes —
+  // analysis typically completes in ~3-5s, so this keeps the wait minimal.
+  while (Date.now() - started < 90 * 1000) {             // give up after 90s
+    await sleep(1500);
     let st;
     try {
       const r = await fetch(api('/api/status/' + jobId), { mode: 'cors' });
@@ -1307,7 +1309,7 @@ async function pollJob(jobId) {
       return;
     }
     if (st.status === 'queued' && st.position > 1) {
-      setWaitMessage(`High demand right now — you're #${st.position} in the queue. Hang tight!`, true);
+      setWaitMessage(`You're #${st.position} in line — just a few seconds!`, true);
     }
   }
   hideWaiting();

@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import re
 import threading
@@ -16,7 +17,7 @@ from companies import GREENHOUSE_COMPANIES, LEVER_COMPANIES
 _SCRAPE_RUNNING = False
 
 # Per (query, country) live-scrape cache — repeat searches are instant for 30 min.
-SOURCE_TIMEOUT = 8            # per-source hard timeout (seconds)
+SOURCE_TIMEOUT = int(os.environ.get("SOURCE_TIMEOUT", "6"))   # per-source hard timeout (seconds)
 _LIVE_CACHE = TTLCache(maxsize=128, ttl=1800)
 _LIVE_CACHE_LOCK = threading.Lock()
 
