@@ -16,12 +16,12 @@
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-# ───────────────────────────── CONFIG (edit me) ─────────────────────────
-DOMAIN="api.yourdomain.com"                       # backend domain (A record -> this box). Blank = IP-only, no HTTPS.
-FRONTEND_ORIGIN="https://your-app.vercel.app"     # your Vercel URL(s), comma-separated
+# ───────────────────────────── CONFIG ───────────────────────────────────
+DOMAIN=""                                         # leave blank — serving frontend from nginx directly (no domain/HTTPS needed)
+FRONTEND_ORIGIN="http://200.97.163.35"            # same-origin, CORS is self-referential
 REPO_URL="https://github.com/akshattickoosrcc/cv-ats-job-finder.git"
 BRANCH="architecture-upgrade"
-LETSENCRYPT_EMAIL="you@example.com"               # for HTTPS renewal notices
+LETSENCRYPT_EMAIL=""
 # ────────────────────────────────────────────────────────────────────────
 
 APP_USER="cvfinder"
@@ -119,19 +119,27 @@ EOF
 systemctl daemon-reload
 systemctl enable --now cvfinder-web cvfinder-worker
 
-echo ">> Configuring nginx reverse proxy…"
-SERVER_NAME="${DOMAIN:-_}"
+echo ">> Configuring nginx (static frontend + API proxy)…"
 cat > /etc/nginx/sites-available/cvfinder <<EOF
 server {
-    listen 80;
-    server_name $SERVER_NAME;
-    client_max_body_size 3m;   # matches the 2 MB upload cap + headroom
+    listen 80 default_server;
+    server_name _;
+    client_max_body_size 3m;
+
+    # Serve the static frontend
+    root $APP_DIR/frontend;
+    index index.html;
 
     location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    # Proxy API and health to gunicorn
+    location ~ ^/(api|health)(/|\$) {
         proxy_pass http://127.0.0.1:$PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$remote_addr;   # single trusted hop (ProxyFix x_for=1)
+        proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 60s;
     }
@@ -146,17 +154,10 @@ ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow 'Nginx Full' >/dev/null 2>&1 || true
 yes | ufw enable >/dev/null 2>&1 || true
 
-if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "api.yourdomain.com" ]; then
-  echo ">> Requesting HTTPS certificate for $DOMAIN…"
-  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$LETSENCRYPT_EMAIL" --redirect || \
-    echo "!! certbot failed (is the DNS A record pointing here yet?). Re-run: certbot --nginx -d $DOMAIN"
-fi
-
 echo ""
 echo "════════════════════════════════════════════════════════════════"
-echo " Done. Backend is live."
-echo "   Health:  curl http://${DOMAIN:-<server-ip>}/health"
+echo " Done! Open http://200.97.163.35 in your browser."
+echo "   Health:  curl http://200.97.163.35/health"
 echo "   Logs:    journalctl -u cvfinder-web -f"
 echo "            journalctl -u cvfinder-worker -f"
-echo "   Set your Vercel config.js API_BASE to: https://${DOMAIN:-<server-ip>}"
 echo "════════════════════════════════════════════════════════════════"

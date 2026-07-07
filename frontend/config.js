@@ -9,4 +9,4 @@
 //  Local dev default below points at gunicorn's default port (8000).
 //  Leave it "" to call the same origin (only useful for the old monolith).
 // ────────────────────────────────────────────────────────────────
-window.API_BASE = "http://200.97.163.35";
+window.API_BASE = "";
