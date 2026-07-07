@@ -111,9 +111,40 @@ def _fail_or_retry(q, job_id: str, error: str) -> None:
         q.set_failed(job_id, "Something went wrong — please re-upload")
 
 
+def _recover_stale_running(q) -> None:
+    """On startup, requeue any jobs left in 'running' state by a previously
+    crashed worker. Without this, those jobs spin forever as 'running' and
+    the user sees the loading spinner until the 5-minute frontend timeout."""
+    try:
+        if hasattr(q, "r"):
+            # Redis: SCAN all job:* hashes for status=running
+            recovered = 0
+            for key in q.r.scan_iter("job:*"):
+                if q.r.hget(key, "status") == "running":
+                    job_id = key.split(":", 1)[1]
+                    log.warning("recovering stale running job %s", job_id)
+                    q.requeue(job_id)
+                    recovered += 1
+            if recovered:
+                log.info("recovered %d stale job(s) from previous crash", recovered)
+        else:
+            # SQLite fallback
+            import sqlite3
+            conn = sqlite3.connect(q.path)
+            rows = conn.execute("SELECT id FROM jobs WHERE status='running'").fetchall()
+            if rows:
+                conn.execute("UPDATE jobs SET status='queued', retries=retries+1 WHERE status='running'")
+                conn.commit()
+                log.info("recovered %d stale job(s) from previous crash (SQLite)", len(rows))
+            conn.close()
+    except Exception as exc:
+        log.warning("stale-job recovery failed (non-fatal): %s", exc)
+
+
 def main():
     q = get_queue()
     log.info("worker started (queue=%s)", type(q).__name__)
+    _recover_stale_running(q)
     threading.Thread(target=_heartbeat_loop, args=(q,), daemon=True).start()
     if os.environ.get("WORKER_SCRAPE", "1") == "1":
         threading.Thread(target=_scrape_loop, daemon=True).start()

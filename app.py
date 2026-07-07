@@ -8,9 +8,8 @@ import uuid
 from datetime import datetime, timezone
 
 import requests as _requests
-from apscheduler.schedulers.background import BackgroundScheduler
 from cachetools import TTLCache
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -59,7 +58,9 @@ limiter = Limiter(
     get_remote_address,
     app=app,
     default_limits=["200 per minute"],
-    storage_uri="memory://",
+    # Use Redis so rate-limit counters are shared across all gunicorn workers.
+    # Falls back to in-process memory for local dev (no REDIS_URL set).
+    storage_uri=os.environ.get("REDIS_URL", "memory://"),
 )
 
 # ── In-process caches ─────────────────────────────────────────────
@@ -959,13 +960,30 @@ _VALID_COUNTRIES = {"in", "us", "uk", "eu", "au", "remote"}
 
 
 def _ip_has_active_job(client_ip: str) -> bool:
-    """True if this IP already has a queued/running job (1 analysis per IP)."""
-    with _ip_lock:
-        jid = _ip_active_job.get(client_ip)
+    """True if this IP already has a queued/running job (1 analysis per IP).
+
+    Uses Redis when available so the check is shared across all gunicorn
+    workers. Falls back to the in-process TTL cache for local/dev."""
+    q = get_queue()
+    if hasattr(q, "r"):
+        jid = q.r.get(f"active_ip:{client_ip}")
+    else:
+        with _ip_lock:
+            jid = _ip_active_job.get(client_ip)
     if not jid:
         return False
-    st = get_queue().get_status(jid).get("status")
+    st = q.get_status(jid).get("status")
     return st in ("queued", "running")
+
+
+def _set_active_job(client_ip: str, job_id: str) -> None:
+    """Record that this IP has an active job. Shared via Redis in production."""
+    q = get_queue()
+    if hasattr(q, "r"):
+        q.r.set(f"active_ip:{client_ip}", job_id, ex=600)
+    else:
+        with _ip_lock:
+            _ip_active_job[client_ip] = job_id
 
 
 @app.route("/api/analyze", methods=["POST"])
@@ -1025,8 +1043,7 @@ def analyze_cv_route():
             pass
         return jsonify({"error": "Could not start analysis — please try again"}), 503
 
-    with _ip_lock:
-        _ip_active_job[client_ip] = job_id
+    _set_active_job(client_ip, job_id)
 
     resp = {"job_id": job_id, "status": "queued"}
     # Friendly high-demand message with queue position during a burst.
