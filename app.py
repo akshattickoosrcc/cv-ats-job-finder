@@ -21,7 +21,7 @@ def _scrapers():
 
 # ── Upload hardening limits ───────────────────────────────────────
 MAX_PDF_BYTES  = 2 * 1024 * 1024   # 2 MB hard cap
-MAX_PDF_PAGES  = 2                 # CV must be ≤ 2 pages
+MAX_PDF_PAGES  = 3                 # CV must be ≤ 3 pages
 MAX_TEXT_BYTES = 500 * 1024        # abort text extraction past 500 KB
 PARSE_TIMEOUT  = 20                # seconds — kill a runaway parse
 
@@ -166,7 +166,7 @@ def validate_pdf(raw: bytes) -> None:
     if num_pages == 0:
         raise PdfRejected("This file could not be processed.")
     if num_pages > MAX_PDF_PAGES:
-        raise PdfRejected("Please upload a CV of maximum 2 pages.")
+        raise PdfRejected("Please upload a CV of maximum 3 pages.")
 
     # 5) No embedded files / attachments.
     if _has_embedded_files(reader):
