@@ -51,9 +51,6 @@ _job_cache_lock   = threading.Lock()
 _uploads_in_progress: set[str] = set()
 _uploads_lock       = threading.Lock()
 
-# Dedicated single-thread pool for bounded PDF parsing (enforces PARSE_TIMEOUT).
-_parse_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-
 # ─────────────────────── ATS keyword data ────────────────────────
 
 ACTION_VERBS = [
@@ -176,10 +173,9 @@ def validate_pdf(raw: bytes) -> None:
         raise PdfRejected("This file could not be processed.")
 
 
-def _extract_text(raw: bytes) -> str:
-    """Plain-text-only extraction with a hard output cap. pdfplumber never
-    executes JS or resolves external references — text extraction only.
-    Aborts once MAX_TEXT_BYTES is exceeded (decompression-bomb guard)."""
+def _extract_with_pdfplumber(raw: bytes) -> str:
+    """Primary extractor. Plain-text-only — never executes JS or resolves
+    external references. Aborts past MAX_TEXT_BYTES (decompression-bomb guard)."""
     import pdfplumber
     parts: list[str] = []
     total = 0
@@ -193,16 +189,57 @@ def _extract_text(raw: bytes) -> str:
     return "\n".join(parts).strip()
 
 
+def _extract_with_pypdf(raw: bytes) -> str:
+    """Fallback extractor for PDFs that pdfplumber chokes on (unusual fonts,
+    CMaps, or producers). Same plain-text-only, capped behaviour."""
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(raw))
+    parts: list[str] = []
+    total = 0
+    for page in reader.pages[:MAX_PDF_PAGES]:
+        txt = page.extract_text() or ""
+        total += len(txt.encode("utf-8", "ignore"))
+        parts.append(txt)
+        if total > MAX_TEXT_BYTES:
+            raise PdfRejected("This file could not be processed.")
+    return "\n".join(parts).strip()
+
+
+def _extract_text(raw: bytes) -> str:
+    """Try pdfplumber, then fall back to pypdf if it errors on a quirky file.
+    Only if BOTH extractors fail do we give up."""
+    try:
+        return _extract_with_pdfplumber(raw)
+    except PdfRejected:
+        raise
+    except Exception as e:
+        app.logger.warning("pdfplumber failed, trying pypdf: %s", e)
+        try:
+            return _extract_with_pypdf(raw)
+        except PdfRejected:
+            raise
+        except Exception as e2:
+            app.logger.warning("pypdf fallback also failed: %s", e2)
+            raise PdfRejected(
+                "We couldn't read the text from this PDF. Try re-exporting or "
+                "'Print to PDF' and upload again."
+            )
+
+
 def parse_cv_text(raw: bytes) -> str:
     """Validate then extract, with a hard wall-clock parse timeout so a
     malicious/pathological file can't pin the worker. Bounded by the 2 MB
-    input cap, 2-page cap and 500 KB text cap so memory stays flat."""
+    input cap, 2-page cap and 500 KB text cap so memory stays flat.
+
+    The executor is created per-call (not at import) so it lives inside the
+    gevent-patched gunicorn worker rather than the pre-fork master process."""
     validate_pdf(raw)
-    fut = _parse_pool.submit(_extract_text, raw)
-    try:
-        return fut.result(timeout=PARSE_TIMEOUT)
-    except concurrent.futures.TimeoutError:
-        raise PdfRejected("This file could not be processed.")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_extract_text, raw)
+        try:
+            return fut.result(timeout=PARSE_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            raise PdfRejected("This file could not be processed.")
 
 
 # ─────────────────────── ATS analysis ────────────────────────────
