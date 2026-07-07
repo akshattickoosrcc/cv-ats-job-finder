@@ -153,7 +153,9 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now cvfinder-web cvfinder-worker
+systemctl enable cvfinder-web cvfinder-worker
+# restart (not just start) so re-running setup.sh always applies new code/env
+systemctl restart cvfinder-web cvfinder-worker
 
 echo ">> Configuring nginx (static frontend + API proxy)…"
 cat > /etc/nginx/sites-available/cvfinder <<EOF
