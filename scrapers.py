@@ -1029,6 +1029,97 @@ def _synonym_queries(query: str) -> list[str]:
     return out
 
 
+# ─────────── Extra free JSON-API sources (reliable, rarely blocked) ──────────
+# These use official public JSON endpoints (no key), so they don't break the
+# way HTML scraping does. They dramatically widen coverage — especially Europe.
+
+def _kw_match(title: str, query: str) -> bool:
+    q_words = [w for w in query.lower().split() if len(w) > 1]
+    t = (title or "").lower()
+    return any(w in t for w in q_words) if q_words else True
+
+
+def scrape_arbeitnow(query: str) -> list[dict]:
+    """Arbeitnow — Europe-wide job board (Germany/NL/EU heavy). Free JSON API."""
+    jobs = []
+    try:
+        r = requests.get("https://www.arbeitnow.com/api/job-board-api",
+                         headers=_h(json_req=True), timeout=12)
+        if r.status_code != 200:
+            return []
+        for j in r.json().get("data", []):
+            title = j.get("title") or ""
+            if not title or not _kw_match(title, query):
+                continue
+            loc = j.get("location") or ("Remote" if j.get("remote") else "Europe")
+            jobs.append({
+                "title":    title,
+                "company":  j.get("company_name") or "Company",
+                "location": loc,
+                "link":     j.get("url") or "https://www.arbeitnow.com",
+                "source":   "Arbeitnow",
+            })
+            if len(jobs) >= 15:
+                break
+    except Exception as e:
+        print(f"[Arbeitnow] {e}")
+    return jobs
+
+
+def scrape_remotive(query: str) -> list[dict]:
+    """Remotive — remote jobs worldwide (many Europe-friendly). Free JSON API."""
+    jobs = []
+    try:
+        r = requests.get("https://remotive.com/api/remote-jobs",
+                         params={"search": query, "limit": 40},
+                         headers=_h(json_req=True), timeout=12)
+        if r.status_code != 200:
+            return []
+        for j in r.json().get("jobs", []):
+            title = j.get("title") or ""
+            if not title:
+                continue
+            jobs.append({
+                "title":    title,
+                "company":  j.get("company_name") or "Company",
+                "location": j.get("candidate_required_location") or "Remote",
+                "link":     j.get("url") or "https://remotive.com",
+                "source":   "Remotive",
+            })
+            if len(jobs) >= 15:
+                break
+    except Exception as e:
+        print(f"[Remotive] {e}")
+    return jobs
+
+
+def scrape_jobicy(query: str) -> list[dict]:
+    """Jobicy — remote jobs with geo filtering. Free JSON API."""
+    jobs = []
+    try:
+        r = requests.get("https://jobicy.com/api/v2/remote-jobs",
+                         params={"count": 50, "tag": query},
+                         headers=_h(json_req=True), timeout=12)
+        if r.status_code != 200:
+            return []
+        for j in r.json().get("jobs", []):
+            title = j.get("jobTitle") or ""
+            if not title or not _kw_match(title, query):
+                continue
+            jobs.append({
+                "title":    title,
+                "company":  j.get("companyName") or "Company",
+                "location": j.get("jobGeo") or "Remote",
+                "link":     j.get("url") or "https://jobicy.com",
+                "source":   "Jobicy",
+            })
+            if len(jobs) >= 15:
+                break
+    except Exception as e:
+        print(f"[Jobicy] {e}")
+    return jobs
+
+
 def _fetch_sources(sources, query: str, include_greenhouse: bool = False) -> list[dict]:
     """Run each source concurrently with a per-source timeout; a slow/broken
     source is skipped, never blocking the batch."""
@@ -1068,17 +1159,19 @@ def scrape_live(query: str, country: str = "in", include_greenhouse: bool = Fals
     if cached is not None:
         return cached
 
-    # Reliable API-based sources — work for all countries.
-    api_sources = [scrape_remoteok, scrape_wwr]
+    # Reliable API-based sources — work for all countries (remote coverage).
+    api_sources = [scrape_remoteok, scrape_wwr, scrape_remotive, scrape_jobicy]
 
     if country == "uk":
-        html_sources = [scrape_reed_uk, scrape_linkedin_uk]
+        html_sources = [scrape_reed_uk, scrape_linkedin_uk, scrape_arbeitnow]
     elif country == "us":
         html_sources = [scrape_indeed, scrape_wellfound]
     elif country == "au":
         html_sources = [scrape_seek_au]
     elif country == "eu":
-        html_sources = [scrape_linkedin_eu]
+        # Europe now has real coverage: LinkedIn EU + Arbeitnow (DE/NL/EU-wide)
+        # + the remote APIs in api_sources (many EU-eligible roles).
+        html_sources = [scrape_linkedin_eu, scrape_arbeitnow]
     elif country == "remote":
         html_sources = [scrape_wellfound]
     else:  # "in" or default
