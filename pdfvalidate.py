@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import io
 
-MAX_PDF_BYTES  = 2 * 1024 * 1024   # 2 MB hard cap
-MAX_PDF_PAGES  = 3                  # CV must be <= 3 pages
+MAX_PDF_BYTES  = 5 * 1024 * 1024   # 5 MB hard cap
+MAX_PDF_PAGES  = 5                  # CV must be <= 5 pages
 
 
 class PdfRejected(Exception):
@@ -40,7 +40,7 @@ def validate_pdf(raw: bytes) -> int:
 
     # 2) Hard size cap.
     if len(raw) > MAX_PDF_BYTES:
-        raise PdfRejected("File too large — please upload a CV under 2 MB.")
+        raise PdfRejected("File too large — please upload a CV under 5 MB.")
 
     from pypdf import PdfReader
     try:

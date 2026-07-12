@@ -847,7 +847,7 @@
         </div>
         <h3>Drop your CV here</h3>
         <p>Drag &amp; drop a PDF, or click to browse</p>
-        <p style="margin-top:.25rem;font-size:.78rem;color:var(--muted)">PDF only · max 3 pages · max 2 MB</p>
+        <p style="margin-top:.25rem;font-size:.78rem;color:var(--muted)">PDF only · max 5 pages · max 5 MB</p>
       </div>
 
       <div class="file-pill" id="file-pill">
@@ -1303,7 +1303,7 @@ fileInput.addEventListener('change', () => {
 let chosenFile = null;
 function setFile(f) {
   if (!f.name.toLowerCase().endsWith('.pdf')) { toast('Please upload a PDF file'); return; }
-  if (f.size > 2 * 1024 * 1024) { toast('File too large — please upload a CV under 2 MB.'); return; }
+  if (f.size > 5 * 1024 * 1024) { toast('File too large — please upload a CV under 5 MB.'); return; }
   chosenFile = f;
   fileNameEl.textContent = f.name;
   filePill.classList.add('visible');

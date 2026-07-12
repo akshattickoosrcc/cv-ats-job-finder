@@ -162,7 +162,7 @@ cat > /etc/nginx/sites-available/cvfinder <<EOF
 server {
     listen 80 default_server;
     server_name _;
-    client_max_body_size 3m;
+    client_max_body_size 6m;
 
     # Static frontend — served by nginx, instant, no cold start
     root $APP_DIR/frontend;

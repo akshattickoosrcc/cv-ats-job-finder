@@ -1008,7 +1008,7 @@ def too_many_requests(e):
 
 @app.errorhandler(413)
 def payload_too_large(e):
-    return jsonify({"error": "File too large — please upload a CV under 2 MB."}), 413
+    return jsonify({"error": "File too large — please upload a CV under 5 MB."}), 413
 
 @app.route("/")
 def index():
@@ -1079,7 +1079,7 @@ def analyze_cv_route():
 
     raw = f.read()
     if len(raw) > MAX_PDF_BYTES:
-        return jsonify({"error": "File too large — please upload a CV under 2 MB."}), 400
+        return jsonify({"error": "File too large — please upload a CV under 5 MB."}), 400
 
     # Full validation BEFORE enqueue (magic bytes, pages, encryption, embedded).
     try:
