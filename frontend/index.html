@@ -484,7 +484,6 @@
       background: var(--surface); outline: none; transition: border-color .12s;
     }
     .pref-input:focus { border-color: var(--primary); }
-    #pref-states-wrap { display: none; }   /* shown by JS only for India */
 
     .filter-row { display: flex; gap: .3rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
     .filter-sep { width: 1px; height: 16px; background: var(--border); margin: 0 .15rem; }
@@ -869,25 +868,6 @@
           <button type="button" class="pref-pill" data-country="remote">🌐 Remote</button>
         </div>
 
-        <div id="pref-states-wrap">
-          <label class="pref-label">Preferred states <span class="opt">— optional, leave blank for all India</span></label>
-          <div class="pref-pills" id="pref-states">
-            <button type="button" class="pref-pill" data-state="karnataka">Karnataka</button>
-            <button type="button" class="pref-pill" data-state="maharashtra">Maharashtra</button>
-            <button type="button" class="pref-pill" data-state="delhi">Delhi NCR</button>
-            <button type="button" class="pref-pill" data-state="telangana">Telangana</button>
-            <button type="button" class="pref-pill" data-state="tamil nadu">Tamil Nadu</button>
-            <button type="button" class="pref-pill" data-state="haryana">Haryana</button>
-            <button type="button" class="pref-pill" data-state="uttar pradesh">Uttar Pradesh</button>
-            <button type="button" class="pref-pill" data-state="west bengal">West Bengal</button>
-            <button type="button" class="pref-pill" data-state="gujarat">Gujarat</button>
-            <button type="button" class="pref-pill" data-state="kerala">Kerala</button>
-            <button type="button" class="pref-pill" data-state="rajasthan">Rajasthan</button>
-            <button type="button" class="pref-pill" data-state="punjab">Punjab</button>
-            <button type="button" class="pref-pill" data-state="madhya pradesh">Madhya Pradesh</button>
-          </div>
-        </div>
-
         <label class="pref-label">Your experience level</label>
         <div class="pref-pills" id="pref-levels">
           <button type="button" class="pref-pill active" data-level="fresher">Fresher</button>
@@ -1220,7 +1200,6 @@ let activeCountry   = 'in';
 // Upload-step manual preferences
 let uploadCountry   = 'in';
 let selectedLevel   = 'fresher';
-let selectedStates  = new Set();
 let cvKeywords      = [];
 let currentJobId    = null;
 let statusPollTimer = null;
@@ -1454,7 +1433,6 @@ analyzeBtn.addEventListener('click', async () => {
   form.append('country', uploadCountry || 'in');
   form.append('experience_level', selectedLevel || 'fresher');
   form.append('desired_role', ($('pref-role').value || '').trim());
-  if (uploadCountry === 'in') form.append('states', [...selectedStates].join(','));
   activeCountry = uploadCountry;   // keep the results job-search in the same region
   try {
     const out = await enqueueWithWarmup(form);
@@ -1919,8 +1897,6 @@ document.querySelectorAll('#pref-countries .pref-pill').forEach(btn => {
     document.querySelectorAll('#pref-countries .pref-pill').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     uploadCountry = btn.dataset.country;
-    // States only make sense for India
-    $('pref-states-wrap').style.display = (uploadCountry === 'in') ? 'block' : 'none';
   });
 });
 document.querySelectorAll('#pref-levels .pref-pill').forEach(btn => {
@@ -1930,14 +1906,6 @@ document.querySelectorAll('#pref-levels .pref-pill').forEach(btn => {
     selectedLevel = btn.dataset.level;
   });
 });
-document.querySelectorAll('#pref-states .pref-pill').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const st = btn.dataset.state;
-    if (selectedStates.has(st)) { selectedStates.delete(st); btn.classList.remove('active'); }
-    else { selectedStates.add(st); btn.classList.add('active'); }
-  });
-});
-$('pref-states-wrap').style.display = (uploadCountry === 'in') ? 'block' : 'none';
 
 warmBackend();         // wake the backend the moment a visitor lands
 pingOnline();          // show the live "online now" count immediately…

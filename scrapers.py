@@ -318,56 +318,6 @@ def detect_country(loc: str) -> str:
     return "other"
 
 
-# ── Indian states → their major job-hub cities (for the India state filter) ──
-INDIAN_STATES = {
-    "maharashtra":     {"mumbai", "pune", "nagpur", "nashik", "thane", "navi mumbai", "aurangabad"},
-    "karnataka":       {"bangalore", "bengaluru", "mysore", "mysuru", "mangalore", "hubli"},
-    "delhi":           {"delhi", "new delhi", "ncr"},
-    "telangana":       {"hyderabad", "secunderabad", "warangal"},
-    "tamil nadu":      {"chennai", "coimbatore", "madurai", "trichy", "salem"},
-    "west bengal":     {"kolkata", "calcutta", "howrah", "siliguri"},
-    "uttar pradesh":   {"noida", "greater noida", "ghaziabad", "lucknow", "kanpur", "varanasi", "agra"},
-    "haryana":         {"gurgaon", "gurugram", "faridabad", "panipat"},
-    "gujarat":         {"ahmedabad", "surat", "vadodara", "gandhinagar", "rajkot"},
-    "rajasthan":       {"jaipur", "jodhpur", "udaipur", "kota"},
-    "kerala":          {"kochi", "cochin", "trivandrum", "thiruvananthapuram", "kozhikode", "calicut"},
-    "punjab":          {"chandigarh", "mohali", "ludhiana", "amritsar", "jalandhar"},
-    "madhya pradesh":  {"indore", "bhopal", "gwalior", "jabalpur"},
-    "odisha":          {"bhubaneswar", "cuttack"},
-    "andhra pradesh":  {"visakhapatnam", "vizag", "vijayawada", "amaravati", "guntur"},
-    "assam":           {"guwahati"},
-    "bihar":           {"patna"},
-    "jharkhand":       {"ranchi", "jamshedpur"},
-    "goa":             {"goa", "panaji"},
-    "uttarakhand":     {"dehradun"},
-}
-
-
-def filter_by_states(jobs: list[dict], states: list[str], include_remote: bool = True) -> list[dict]:
-    """Keep only jobs located in the user's chosen Indian states (matched by the
-    state's hub cities or the state name). Remote jobs are kept too since they
-    work from anywhere. Empty `states` = no filtering."""
-    if not states:
-        return jobs
-    wanted: set[str] = set()
-    for s in states:
-        s = (s or "").strip().lower()
-        if not s:
-            continue
-        wanted |= INDIAN_STATES.get(s, set())
-        wanted.add(s)
-    if not wanted:
-        return jobs
-    out = []
-    for j in jobs:
-        loc = (j.get("location") or "").lower()
-        if any(w in loc for w in wanted):
-            out.append(j)
-        elif include_remote and "remote" in loc:
-            out.append(j)
-    return out
-
-
 # ─────────────────────── Naukri ──────────────────────────────────
 
 def scrape_naukri(query: str) -> list[dict]:

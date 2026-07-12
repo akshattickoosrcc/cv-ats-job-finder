@@ -1091,16 +1091,12 @@ def analyze_cv_route():
     if country not in _VALID_COUNTRIES:
         country = "in"
 
-    # User's manual choices (all optional): self-declared experience level, the
-    # role they actually want, and (India only) the states to filter to.
+    # User's manual choices (both optional): self-declared experience level and
+    # the role they actually want.
     user_level = (request.form.get("experience_level") or "").strip().lower()
     if user_level not in {"fresher", "junior", "mid", "senior", "lead"}:
         user_level = ""
     desired_role = (request.form.get("desired_role") or "").strip()[:120]
-    states = []
-    if country == "in":
-        raw_states = (request.form.get("states") or "").strip()
-        states = [s.strip().lower() for s in raw_states.split(",") if s.strip()][:15]
 
     q = get_queue()
     depth = q.depth()
@@ -1122,7 +1118,7 @@ def analyze_cv_route():
             out.write(raw)
         job_id = q.enqueue({
             "pdf_path": pdf_path, "country": country,
-            "user_level": user_level, "desired_role": desired_role, "states": states,
+            "user_level": user_level, "desired_role": desired_role,
         })
     except Exception as e:
         app.logger.error("enqueue failed: %s", e, exc_info=True)
