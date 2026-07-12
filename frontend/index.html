@@ -463,6 +463,29 @@
       color: #fff;
     }
 
+    /* ── Upload preferences (manual level / role / states) ── */
+    .upload-prefs { margin: 1.25rem 0 0; text-align: left; }
+    .pref-label {
+      display: block; font-size: .8rem; font-weight: 600; color: var(--text);
+      margin: 1rem 0 .45rem;
+    }
+    .pref-label .opt { font-weight: 400; color: var(--muted); font-size: .74rem; }
+    .pref-pills { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .pref-pill {
+      padding: .38rem .8rem; border-radius: 999px; font-size: .8rem; font-weight: 500;
+      cursor: pointer; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); transition: all .12s;
+    }
+    .pref-pill:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+    .pref-pill.active { border-color: var(--primary); background: var(--primary); color: #fff; }
+    .pref-input {
+      width: 100%; padding: .6rem .85rem; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: .88rem; color: var(--text);
+      background: var(--surface); outline: none; transition: border-color .12s;
+    }
+    .pref-input:focus { border-color: var(--primary); }
+    #pref-states-wrap { display: none; }   /* shown by JS only for India */
+
     .filter-row { display: flex; gap: .3rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
     .filter-sep { width: 1px; height: 16px; background: var(--border); margin: 0 .15rem; }
     .filter-btn {
@@ -835,6 +858,49 @@
         <span id="file-name"></span>
       </div>
 
+      <div class="upload-prefs" id="upload-prefs">
+        <label class="pref-label">Where do you want to work?</label>
+        <div class="pref-pills" id="pref-countries">
+          <button type="button" class="pref-pill active" data-country="in">🇮🇳 India</button>
+          <button type="button" class="pref-pill" data-country="us">🇺🇸 USA</button>
+          <button type="button" class="pref-pill" data-country="uk">🇬🇧 UK</button>
+          <button type="button" class="pref-pill" data-country="eu">🇪🇺 Europe</button>
+          <button type="button" class="pref-pill" data-country="au">🇦🇺 Australia</button>
+          <button type="button" class="pref-pill" data-country="remote">🌐 Remote</button>
+        </div>
+
+        <div id="pref-states-wrap">
+          <label class="pref-label">Preferred states <span class="opt">— optional, leave blank for all India</span></label>
+          <div class="pref-pills" id="pref-states">
+            <button type="button" class="pref-pill" data-state="karnataka">Karnataka</button>
+            <button type="button" class="pref-pill" data-state="maharashtra">Maharashtra</button>
+            <button type="button" class="pref-pill" data-state="delhi">Delhi NCR</button>
+            <button type="button" class="pref-pill" data-state="telangana">Telangana</button>
+            <button type="button" class="pref-pill" data-state="tamil nadu">Tamil Nadu</button>
+            <button type="button" class="pref-pill" data-state="haryana">Haryana</button>
+            <button type="button" class="pref-pill" data-state="uttar pradesh">Uttar Pradesh</button>
+            <button type="button" class="pref-pill" data-state="west bengal">West Bengal</button>
+            <button type="button" class="pref-pill" data-state="gujarat">Gujarat</button>
+            <button type="button" class="pref-pill" data-state="kerala">Kerala</button>
+            <button type="button" class="pref-pill" data-state="rajasthan">Rajasthan</button>
+            <button type="button" class="pref-pill" data-state="punjab">Punjab</button>
+            <button type="button" class="pref-pill" data-state="madhya pradesh">Madhya Pradesh</button>
+          </div>
+        </div>
+
+        <label class="pref-label">Your experience level</label>
+        <div class="pref-pills" id="pref-levels">
+          <button type="button" class="pref-pill active" data-level="fresher">Fresher</button>
+          <button type="button" class="pref-pill" data-level="junior">1–3 yrs</button>
+          <button type="button" class="pref-pill" data-level="mid">3–6 yrs</button>
+          <button type="button" class="pref-pill" data-level="senior">6–10 yrs</button>
+          <button type="button" class="pref-pill" data-level="lead">10+ yrs</button>
+        </div>
+
+        <label class="pref-label">Role you want <span class="opt">— optional, otherwise we pick from your CV</span></label>
+        <input type="text" id="pref-role" class="pref-input" placeholder="e.g. Frontend Developer, Data Analyst, Marketing…" />
+      </div>
+
       <div class="upload-actions">
         <button id="analyze-btn" class="btn btn-primary" disabled>
           <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1151,6 +1217,10 @@ async function pingOnline() {
 let allJobs         = [];
 let activeFilter    = 'all';
 let activeCountry   = 'in';
+// Upload-step manual preferences
+let uploadCountry   = 'in';
+let selectedLevel   = 'fresher';
+let selectedStates  = new Set();
 let cvKeywords      = [];
 let currentJobId    = null;
 let statusPollTimer = null;
@@ -1381,7 +1451,11 @@ analyzeBtn.addEventListener('click', async () => {
   showWaiting();
   const form = new FormData();
   form.append('cv', chosenFile);
-  form.append('country', activeCountry || 'in');
+  form.append('country', uploadCountry || 'in');
+  form.append('experience_level', selectedLevel || 'fresher');
+  form.append('desired_role', ($('pref-role').value || '').trim());
+  if (uploadCountry === 'in') form.append('states', [...selectedStates].join(','));
+  activeCountry = uploadCountry;   // keep the results job-search in the same region
   try {
     const out = await enqueueWithWarmup(form);
     if (!out.ok) {                       // validation / rate-limit → show now
@@ -1494,12 +1568,11 @@ function renderATS(d) {
   const rec = d.recommendation;
   if (rec && rec.query) {
     recommendedQuery = rec.query;
-    const exp = rec.experience || {};
-    const lvl = exp.level || 'fresher';
-    const yrs = exp.years || 0;
-    const lblMap = { fresher:'Fresher', junior:'Junior', mid:'Mid-level', senior:'Senior', lead:'Lead / Principal' };
+    // Show the user's OWN chosen level — never the tool's auto-assessed years.
+    const lvl = selectedLevel || 'fresher';
+    const lblMap = { fresher:'Fresher', junior:'1–3 yrs', mid:'3–6 yrs', senior:'6–10 yrs', lead:'10+ yrs' };
     const expEl = $('exp-badge');
-    expEl.textContent = (lblMap[lvl] || lvl) + (yrs > 0 ? ` · ${yrs} yr${yrs!==1?'s':''}` : '');
+    expEl.textContent = lblMap[lvl] || lvl;
     expEl.className   = `exp-badge ${lvl}`;
 
     const barsEl    = $('domain-bars');
@@ -1840,6 +1913,32 @@ recSearchBtn.addEventListener('click', () => {
 
 /* ── Boot ── */
 pollStatus();          // hides the old admin status bar
+/* ── Upload-step preference pills ──────────────────────────────── */
+document.querySelectorAll('#pref-countries .pref-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#pref-countries .pref-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    uploadCountry = btn.dataset.country;
+    // States only make sense for India
+    $('pref-states-wrap').style.display = (uploadCountry === 'in') ? 'block' : 'none';
+  });
+});
+document.querySelectorAll('#pref-levels .pref-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#pref-levels .pref-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedLevel = btn.dataset.level;
+  });
+});
+document.querySelectorAll('#pref-states .pref-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const st = btn.dataset.state;
+    if (selectedStates.has(st)) { selectedStates.delete(st); btn.classList.remove('active'); }
+    else { selectedStates.add(st); btn.classList.add('active'); }
+  });
+});
+$('pref-states-wrap').style.display = (uploadCountry === 'in') ? 'block' : 'none';
+
 warmBackend();         // wake the backend the moment a visitor lands
 pingOnline();          // show the live "online now" count immediately…
 setInterval(pingOnline, 15000);   // …and keep it fresh every 15s</script>

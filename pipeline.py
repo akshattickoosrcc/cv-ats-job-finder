@@ -25,7 +25,7 @@ import scrapers
 
 
 def _scrape_and_score(field: str, cv_keywords: list, country: str,
-                      user_level: str = "") -> list[dict]:
+                      user_level: str = "", states: list = None) -> list[dict]:
     """Score cached (+ optionally freshly-scraped) jobs against the CV and rank
     them, factoring in the candidate's EXPERIENCE LEVEL so a fresher isn't shown
     director roles and a senior isn't shown internships.
@@ -77,12 +77,22 @@ def _scrape_and_score(field: str, cv_keywords: list, country: str,
     jobs.sort(key=lambda j: (-j["_rank"], -j["match_score"]))
     for j in jobs:
         j.pop("_rank", None)
+    # India-only internal filter: keep only the states the user selected.
+    if country == "in" and states:
+        jobs = scrapers.filter_by_states(jobs, states)
     return jobs[:300]
 
 
-def run_analysis(text: str, *, do_scrape: bool = True, country: str = "in") -> dict:
-    """Full analysis for already-extracted CV text. Returns the same result
-    shape the old synchronous endpoint returned, plus matched jobs."""
+_VALID_LEVELS = {"fresher", "junior", "mid", "senior", "lead"}
+
+
+def run_analysis(text: str, *, do_scrape: bool = True, country: str = "in",
+                 user_level: str = "", desired_role: str = "",
+                 states: list = None) -> dict:
+    """Full analysis for already-extracted CV text. The USER's manual choices
+    take priority: `user_level` (their self-declared experience) drives job
+    ranking, `desired_role` drives the search query, and `states` filters
+    India results. Falls back to CV-derived values when not provided."""
     if not text.strip():
         raise ValueError("empty CV text")
 
@@ -100,9 +110,13 @@ def run_analysis(text: str, *, do_scrape: bool = True, country: str = "in") -> d
 
         jobs = []
         if do_scrape:
-            field = recommendation.get("query") or "software engineer"
-            user_level = (recommendation.get("experience") or {}).get("level", "")
-            jobs = _scrape_and_score(field, cv_keywords, country, user_level)
+            # User's typed role wins; else the CV-recommended query.
+            field = (desired_role or "").strip() or recommendation.get("query") or "software engineer"
+            # User's self-declared level wins; else the (fixed) CV estimate.
+            lvl = (user_level or "").strip().lower()
+            if lvl not in _VALID_LEVELS:
+                lvl = (recommendation.get("experience") or {}).get("level", "")
+            jobs = _scrape_and_score(field, cv_keywords, country, lvl, states)
     result["jobs"] = jobs
 
     # Diff against last review (CV-improvement tracking) — same as before.

@@ -88,7 +88,12 @@ def _process(q, job_id: str, payload: dict) -> None:
             raise RuntimeError("Could not extract text — is the PDF a scanned image?")
 
         import pipeline
-        result = pipeline.run_analysis(text, do_scrape=True, country=country)
+        result = pipeline.run_analysis(
+            text, do_scrape=True, country=country,
+            user_level=payload.get("user_level", ""),
+            desired_role=payload.get("desired_role", ""),
+            states=payload.get("states") or [],
+        )
         q.set_done(job_id, result)
         log.info("job %s done (score=%s, %d jobs)", job_id,
                  result.get("score"), len(result.get("jobs", [])))
