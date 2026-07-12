@@ -48,6 +48,7 @@ def _scrape_loop():
     Runs a scrape on startup, then every SCRAPE_INTERVAL_HOURS. This lives in
     the WORKER so it never touches the web server's latency."""
     import scrapers
+    import db
     interval = int(os.environ.get("SCRAPE_INTERVAL_HOURS", "6")) * 3600
     mode = os.environ.get("SCRAPE_MODE", "full")   # "full" or "light"
     time.sleep(int(os.environ.get("SCRAPE_STARTUP_DELAY", "20")))
@@ -55,7 +56,9 @@ def _scrape_loop():
         try:
             log.info("periodic scrape starting (mode=%s)", mode)
             (scrapers.run_render_scrape if mode == "light" else scrapers.run_full_scrape)()
-            log.info("periodic scrape done")
+            # Drop listings not seen in a scrape for a month — no stale jobs.
+            removed = db.clear_old_jobs()
+            log.info("periodic scrape done; purged %d stale job(s)", removed)
         except Exception as e:
             log.warning("periodic scrape failed: %s", e)
         time.sleep(interval)

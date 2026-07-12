@@ -104,9 +104,15 @@ def save_jobs(jobs: list[dict]) -> int:
         if not link or not title:
             continue
         try:
+            # UPSERT: if we see a job again, refresh scraped_at so it means
+            # "last seen in a scrape". Jobs still being posted stay fresh;
+            # ones that vanish from every source age out and get purged.
             c.execute(
-                "INSERT OR IGNORE INTO jobs (title, company, location, link, source, scraped_at) "
-                "VALUES (?,?,?,?,?,?)",
+                "INSERT INTO jobs (title, company, location, link, source, scraped_at) "
+                "VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(link) DO UPDATE SET scraped_at=excluded.scraped_at, "
+                "  title=excluded.title, company=excluded.company, "
+                "  location=excluded.location, source=excluded.source",
                 (
                     title,
                     (job.get("company") or "").strip(),
@@ -156,6 +162,13 @@ def search_jobs(query: str, source: str = None, limit: int = 500) -> list[dict]:
     if source:
         sql += " AND source = ?" if "WHERE" in sql else " WHERE source = ?"
         params.append(source)
+
+    # Never return jobs older than JOB_MAX_AGE_DAYS (default 30) — no stale
+    # month-old listings, even if the periodic purge hasn't run yet.
+    max_age = int(os.environ.get("JOB_MAX_AGE_DAYS", "30"))
+    sql += (" AND " if "WHERE" in sql else " WHERE ")
+    sql += "scraped_at >= datetime('now', ?)"
+    params.append(f"-{max_age} days")
 
     sql += " ORDER BY scraped_at DESC LIMIT ?"
     params.append(limit)
@@ -227,13 +240,18 @@ def get_last_ats_review() -> dict | None:
     return r
 
 
-def clear_old_jobs(keep_days: int = 2):
+def clear_old_jobs(keep_days: int = None):
+    """Delete jobs not seen in a scrape for `keep_days` days (default from
+    JOB_MAX_AGE_DAYS env, 30). Returns how many were removed."""
+    if keep_days is None:
+        keep_days = int(os.environ.get("JOB_MAX_AGE_DAYS", "30"))
     c = _conn()
-    c.execute(
+    cur = c.execute(
         "DELETE FROM jobs WHERE scraped_at < datetime('now', ?)",
         (f"-{keep_days} days",),
     )
     c.commit()
+    return cur.rowcount
 
 
 # ───────────────────────── Payment tracker ───────────────────────
