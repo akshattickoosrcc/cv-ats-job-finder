@@ -645,6 +645,42 @@ DOMAIN_ROLES: dict[str, dict[str, list[str]]] = {
 }
 
 
+def _work_experience_slice(text: str) -> str:
+    """Return just the WORK-EXPERIENCE section of the CV (header → next section
+    header). Used so we only count real job dates — not a birth year, a school
+    year, or a graduation year that happens to appear elsewhere."""
+    t = text.lower()
+    starts = [t.find(kw) for kw in SECTION_PATTERNS["experience"] if t.find(kw) != -1]
+    if not starts:
+        return ""            # no work-experience section at all → fresher
+    start = min(starts)
+    end = len(text)
+    for kw in ("education", "projects", "skills", "certification", "achievement",
+               "award", "interest", "hobby", "publication", "language", "reference"):
+        i = t.find(kw, start + 12)
+        if i != -1:
+            end = min(end, i)
+    return text[start:end]
+
+
+def _years_from_ranges(segment: str) -> int:
+    """Sum the durations of employment date ranges (e.g. '2021 - 2024',
+    'Jun 2022 – Present') found in a text segment. Standalone years are ignored,
+    so a lone birth/graduation year can never inflate the estimate."""
+    if not segment:
+        return 0
+    cur = datetime.now().year
+    total = 0
+    pat = r'((?:19|20)\d{2})\s*(?:-|–|—|to|until|till)\s*(present|current|now|ongoing|till\s*date|date|(?:19|20)\d{2})'
+    for m in re.finditer(pat, segment.lower()):
+        start = int(m.group(1))
+        end_raw = m.group(2)
+        end = cur if not end_raw[:2].isdigit() else int(end_raw)
+        if 1990 <= start <= cur and start <= end <= cur + 1:
+            total += (end - start)
+    return min(total, 45)
+
+
 def detect_experience_level(text: str) -> dict:
     """
     Returns {level, years, has_internship_only}.
@@ -662,6 +698,8 @@ def detect_experience_level(text: str) -> dict:
     for pat in exp_patterns:
         for m in re.findall(pat, t):
             explicit_years = max(explicit_years, int(m))
+    if explicit_years > 50:      # garbage match (e.g. "1000 years") → ignore
+        explicit_years = 0
 
     # Detect if candidate is explicitly a fresher
     fresher_flags = [
@@ -681,14 +719,15 @@ def detect_experience_level(text: str) -> dict:
     ]
     has_fulltime = any(re.search(p, t) for p in fulltime_signals)
 
-    # Estimate years from date ranges in CV if no explicit mention
+    # Estimate years ONLY from employment date-ranges inside the work-experience
+    # section — never from stray years elsewhere (birth year, school year, etc.),
+    # which used to wildly over-count (a 2004 birth year → "11 years").
     if explicit_years == 0 and not is_explicit_fresher:
-        year_matches = [int(y) for y in re.findall(r"\b(20\d{2})\b", t)
-                        if 2000 <= int(y) <= 2026]
-        if len(year_matches) >= 2:
-            span = max(year_matches) - min(year_matches)
-            # Conservative: halve because many dates are education, not all work
-            explicit_years = min(span // 2, 20)
+        explicit_years = _years_from_ranges(_work_experience_slice(text))
+
+    # Internship-only candidates are freshers regardless of any date maths.
+    if has_internship and not has_fulltime:
+        explicit_years = min(explicit_years, 1)
 
     # Final classification
     if is_explicit_fresher or (has_internship and not has_fulltime) or explicit_years <= 1:
