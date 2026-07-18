@@ -5,33 +5,72 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CV Analyzer &amp; Job Finder</title>
   <style>
-    /* ── Design tokens ── */
-    :root {
-      --primary:       #4f46e5;
-      --primary-dark:  #3730a3;
-      --primary-light: #eeecfb;
-      --primary-grad:  linear-gradient(135deg, #5b5bd6 0%, #7c7ae8 100%);
-      --success:       #16a34a;
+    /* ── Design tokens ──────────────────────────────────────────────
+       Monochrome system. Every colour is a token so the dark theme is
+       a pure token swap — no per-component dark rules.               */
+    :root, [data-theme="light"] {
+      --primary:       #18181b;   /* near-black reads premium; mid-grey reads dead */
+      --primary-dark:  #000000;
+      --primary-light: #f4f4f5;
+      --primary-fg:    #ffffff;   /* text/icons sitting ON primary */
+      --primary-grad:  linear-gradient(135deg, #27272a 0%, #52525b 100%);
+      --success:       #15803d;
       --success-light: #dcfce7;
-      --warning:       #d97706;
+      --warning:       #b45309;
       --warning-light: #fef3c7;
-      --danger:        #dc2626;
+      --danger:        #b91c1c;
       --danger-light:  #fee2e2;
-      --bg:            #f4f4f8;
+      --bg:            #fafafa;
       --surface:       #ffffff;
-      --surface-2:     #fafafa;
-      --text:          #111118;
+      --surface-2:     #f7f7f8;
+      --text:          #09090b;
       --muted:         #71717a;
       --border:        #e4e4e7;
-      --shadow:        0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04);
-      --shadow-md:     0 4px 12px rgba(0,0,0,.07);
-      --shadow-lg:     0 8px 24px rgba(0,0,0,.10);
-      --radius:        12px;
-      --radius-sm:     8px;
+      --border-strong: #d4d4d8;
+      --header-bg:     rgba(255,255,255,.72);
+      --ring:          rgba(0,0,0,.08);
+      --scan:          #0ea5e9;   /* scanner beam — the one deliberate pop of colour */
+      /* layered shadows — depth comes from stacking soft + tight, not one blur */
+      --shadow:        0 1px 2px rgba(9,9,11,.04), 0 2px 6px rgba(9,9,11,.03);
+      --shadow-md:     0 2px 4px rgba(9,9,11,.04), 0 8px 20px rgba(9,9,11,.06);
+      --shadow-lg:     0 4px 8px rgba(9,9,11,.04), 0 18px 40px rgba(9,9,11,.10);
+      --radius:        14px;
+      --radius-sm:     9px;
       --radius-xs:     6px;
     }
 
+    [data-theme="dark"] {
+      --primary:       #fafafa;   /* inverts: light button on dark ground */
+      --primary-dark:  #ffffff;
+      --primary-light: #1f1f23;
+      --primary-fg:    #09090b;
+      --primary-grad:  linear-gradient(135deg, #fafafa 0%, #a1a1aa 100%);
+      --success:       #4ade80;
+      --success-light: #14321f;
+      --warning:       #fbbf24;
+      --warning-light: #3a2c0c;
+      --danger:        #f87171;
+      --danger-light:  #3b1618;
+      --bg:            #09090b;
+      --surface:       #131316;
+      --surface-2:     #1a1a1f;
+      --text:          #fafafa;
+      --muted:         #a1a1aa;
+      --border:        #27272a;
+      --border-strong: #3f3f46;
+      --header-bg:     rgba(19,19,22,.72);
+      --ring:          rgba(255,255,255,.10);
+      --scan:          #38bdf8;
+      /* on dark, shadow alone is invisible — depth comes from the border + a lift glow */
+      --shadow:        0 1px 2px rgba(0,0,0,.40);
+      --shadow-md:     0 2px 4px rgba(0,0,0,.45), 0 8px 20px rgba(0,0,0,.35);
+      --shadow-lg:     0 4px 8px rgba(0,0,0,.50), 0 18px 40px rgba(0,0,0,.45);
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { color-scheme: light; }
+    [data-theme="dark"] { color-scheme: dark; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
@@ -39,13 +78,101 @@
       color: var(--text);
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
+      transition: background-color .25s ease, color .25s ease;
+    }
+    /* Fixed ambient wash — stops the page reading as one flat slab.
+       Sits behind everything and costs nothing to paint. */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(70rem 40rem at 50% -12%, var(--surface) 0%, transparent 65%),
+        radial-gradient(50rem 30rem at 100% 0%, var(--surface-2) 0%, transparent 60%);
+    }
+    /* theme swap should glide, but never animate a user's first paint */
+    .theme-ready .card,
+    .theme-ready header,
+    .theme-ready .job-card { transition: background-color .25s ease, border-color .25s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      body, .theme-ready * { transition: none !important; }
+    }
+
+    /* ── Cursor spotlight ──────────────────────────────────────────
+       A soft glow trailing the pointer. Fixed, behind content, and
+       only ever enabled for fine pointers (see JS).                 */
+    .cursor-glow {
+      position: fixed;
+      top: 0; left: 0;
+      width: 460px; height: 460px;
+      margin: -230px 0 0 -230px;
+      border-radius: 50%;
+      pointer-events: none;
+      /* Above content (header is 100, toasts are 999) and blended, not
+         stacked — at z-index 0 it hid behind every opaque card, which
+         made the effect look like it only worked on part of the page. */
+      z-index: 150;
+      opacity: 0;
+      mix-blend-mode: multiply;
+      background: radial-gradient(circle closest-side,
+                  rgba(0,0,0,.075) 0%, transparent 100%);
+      transition: opacity .35s ease;
+      will-change: transform;
+    }
+    [data-theme="dark"] .cursor-glow {
+      mix-blend-mode: screen;
+      background: radial-gradient(circle closest-side,
+                  rgba(255,255,255,.10) 0%, transparent 100%);
+    }
+    body.pointer-fine .cursor-glow { opacity: 1; }
+    header, main, .toast-wrap { position: relative; z-index: 1; }
+
+    /* Cards pick up a light that tracks the cursor across them. */
+    .card, .job-card, .drop-zone {
+      position: relative;
+    }
+    body.pointer-fine .drop-zone::after,
+    body.pointer-fine .job-card::after {
+      content: "";
+      position: absolute; inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .3s ease;
+      background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%),
+                  color-mix(in oklab, var(--text) 6%, transparent), transparent 70%);
+    }
+    body.pointer-fine .drop-zone:hover::after,
+    body.pointer-fine .job-card:hover::after { opacity: 1; }
+
+    /* ── Click ripple ── */
+    .ripple {
+      position: absolute;
+      border-radius: 50%;
+      transform: scale(0);
+      pointer-events: none;
+      background: currentColor;
+      opacity: .35;
+      animation: rippleOut .55s ease-out forwards;
+    }
+    @keyframes rippleOut {
+      to { transform: scale(2.6); opacity: 0; }
+    }
+    /* Every ripple host must clip, or the circle spills outside the control. */
+    .btn, .theme-toggle, .apply-btn, .pref-pill { position: relative; overflow: hidden; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .cursor-glow { display: none; }
+      .ripple { animation: none; display: none; }
     }
 
     /* ── Header ── */
     header {
-      background: rgba(255,255,255,.95);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      background: var(--header-bg);
+      backdrop-filter: blur(12px) saturate(180%);
+      -webkit-backdrop-filter: blur(12px) saturate(180%);
       border-bottom: 1px solid var(--border);
       padding: .875rem 2rem;
       display: flex;
@@ -73,13 +200,33 @@
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
-    .header-logo-dot svg { color: #fff; width: 16px; height: 16px; }
+    .header-logo-dot svg { color: var(--primary-fg); width: 16px; height: 16px; }
     .header-tagline {
       font-size: .78rem;
       color: var(--muted);
       font-weight: 400;
     }
     .header-right { display: flex; align-items: center; gap: .75rem; }
+    /* ── Theme toggle ── */
+    .theme-toggle {
+      width: 32px; height: 32px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: color .15s ease, border-color .15s ease, background-color .15s ease, transform .15s ease;
+    }
+    .theme-toggle:hover { color: var(--text); border-color: var(--border-strong); background: var(--surface-2); }
+    .theme-toggle:active { transform: scale(.94); }
+    .theme-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+    /* show exactly one icon — the one for the theme you'd switch TO */
+    .theme-toggle .icon-moon { display: none; }
+    [data-theme="dark"] .theme-toggle .icon-sun  { display: none; }
+    [data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+
 
     /* Live "online now" pill */
     .online-wrap {
@@ -88,7 +235,7 @@
       gap: .4rem;
       padding: .3rem .7rem;
       background: var(--success-light);
-      border: 1px solid #bbf7d0;
+      border: 1px solid color-mix(in oklab, var(--success) 35%, transparent);
       border-radius: 999px;
       font-size: .76rem;
       font-weight: 600;
@@ -182,7 +329,7 @@
       width: 48px; height: 48px;
       border-radius: 10px;
       background: var(--primary-light);
-      border: 1px solid #d0ceef;
+      border: 1px solid var(--border-strong);
       display: flex; align-items: center; justify-content: center;
       margin: 0 auto 1rem;
     }
@@ -202,7 +349,7 @@
       font-size: .82rem;
       font-weight: 600;
       color: var(--success);
-      border: 1px solid #bbf7d0;
+      border: 1px solid color-mix(in oklab, var(--success) 35%, transparent);
     }
     .file-pill.visible { display: inline-flex; }
 
@@ -222,12 +369,12 @@
       letter-spacing: -.01em;
     }
     .btn:disabled { opacity: .4; cursor: not-allowed; }
-    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary { background: var(--primary); color: var(--primary-fg); }
     .btn-primary:hover:not(:disabled) { background: var(--primary-dark); }
     .btn:disabled { opacity: .35; cursor: not-allowed; }
     .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
     .btn-ghost:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
-    .btn-white { background: #fff; color: var(--primary-dark); font-weight: 600; }
+    .btn-white { background: var(--surface); color: var(--primary-dark); font-weight: 600; }
     .btn-white:hover:not(:disabled) { background: var(--primary-light); }
 
     .upload-actions { margin-top: 1.25rem; display: flex; justify-content: center; }
@@ -250,25 +397,155 @@
     /* ── CV analysis waiting experience ── */
     .wait-section { display: none; padding: 2rem 1rem 1rem; text-align: center; }
     .wait-section.on { display: block; }
-    .wait-ring {
-      position: relative; width: 92px; height: 92px; margin: 0 auto 1.25rem;
-      border-radius: 50%;
-      background: conic-gradient(var(--primary) var(--wait-deg, 0deg), var(--border) 0deg);
-      transition: background .3s ease;
+    .wait-ring[hidden] { display: none; }
+
+    /* ── The CV machine ────────────────────────────────────────────
+       One 2.4s loop drives everything; each element just offsets into
+       it via --d. Strokes inherit theme tokens so it works in dark.  */
+    .machine-scene {
+      position: relative;
+      width: min(340px, 100%);
+      margin: 0 auto .75rem;
     }
-    .wait-ring::after {
-      content: ''; position: absolute; inset: 8px;
-      background: var(--surface); border-radius: 50%;
+    .machine-scene svg { width: 100%; height: auto; overflow: visible; }
+
+    .mch-belt {
+      stroke: var(--border); stroke-width: 2; stroke-linecap: round;
+      stroke-dasharray: 6 8;
+      animation: beltRun 1.2s linear infinite;
     }
-    .wait-ring-spin {
-      position: absolute; inset: -3px; border-radius: 50%;
-      border: 3px solid transparent; border-top-color: var(--primary);
-      opacity: .55; animation: spin 1s linear infinite;
+    @keyframes beltRun { to { stroke-dashoffset: -28; } }
+
+    /* Sheets feed in from the left and get swallowed at the slot. */
+    .mch-paper {
+      opacity: 0;
+      transform-box: fill-box; transform-origin: center;
+      animation: cvFeed 2.4s cubic-bezier(.5,.05,.6,1) infinite;
+      animation-delay: var(--d);
     }
+    .mch-sheet { fill: var(--surface); stroke: var(--border-strong); stroke-width: 2; }
+    .mch-line  { stroke: var(--muted); stroke-width: 2.5; stroke-linecap: round; opacity: .55; }
+    @keyframes cvFeed {
+      0%   { opacity: 0; transform: translate(6px, 46px) scale(.9) rotate(-6deg); }
+      12%  { opacity: 1; }
+      55%  { opacity: 1; transform: translate(84px, 44px) scale(1) rotate(0deg); }
+      /* swallowed: squash into the slot */
+      72%  { opacity: 1; transform: translate(104px, 46px) scale(.06, .92) rotate(0deg); }
+      76%, 100% { opacity: 0; transform: translate(104px, 46px) scale(.06, .92); }
+    }
+
+    .mch-shell {
+      fill: var(--surface-2); stroke: var(--border-strong); stroke-width: 2.5;
+    }
+    .mch-body {
+      transform-box: fill-box; transform-origin: center;
+      animation: mchChomp 2.4s ease-in-out infinite;
+    }
+    @keyframes mchChomp {
+      0%, 62%, 100% { transform: translateY(0) scaleY(1); }
+      70%           { transform: translateY(1.5px) scaleY(.965); }
+      80%           { transform: translateY(-1px) scaleY(1.015); }
+    }
+
+    .mch-window { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+    .mch-scan   { fill: var(--scan); opacity: 0; animation: scanFlash 2.4s ease-out infinite; }
+    @keyframes scanFlash { 0%,64% { opacity: 0; } 70% { opacity: .18; } 100% { opacity: 0; } }
+
+    .mch-scanline {
+      stroke: var(--scan); stroke-width: 2; stroke-linecap: round;
+      filter: drop-shadow(0 0 3px color-mix(in oklab, var(--scan) 70%, transparent));
+      animation: scanSweep 1.2s ease-in-out infinite;
+    }
+    @keyframes scanSweep {
+      0%, 100% { transform: translateY(2px);  opacity: .25; }
+      50%      { transform: translateY(36px); opacity: .9; }
+    }
+
+    .mch-led { fill: var(--border-strong); animation: ledBlink 2.4s steps(1) infinite; }
+    .mch-led.l1 { animation-delay: 0s; }
+    .mch-led.l2 { animation-delay: .3s; }
+    .mch-led.l3 { animation-delay: .6s; }
+    @keyframes ledBlink { 0%,20% { fill: var(--success); } 21%,100% { fill: var(--border-strong); } }
+
+    .mch-gear {
+      fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round;
+      transform-box: fill-box; transform-origin: center;
+      animation: spin 2.4s linear infinite;
+      opacity: .7;
+    }
+
+    /* Job cards arc out of the machine and drop into the basket. */
+    .mch-job {
+      opacity: 0;
+      transform-box: fill-box; transform-origin: center;
+      animation: jobOut 2.4s cubic-bezier(.35,.7,.4,1) infinite;
+      animation-delay: var(--d);
+    }
+    .mch-job rect { fill: var(--surface); stroke: var(--scan); stroke-width: 2; }
+    .mch-job line { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; opacity: .6; }
+    @keyframes jobOut {
+      0%       { opacity: 0; transform: translate(176px, 56px) scale(.4) rotate(0deg); }
+      12%      { opacity: 1; transform: translate(188px, 50px) scale(1) rotate(6deg); }
+      55%      { opacity: 1; transform: translate(212px, 40px) scale(1) rotate(16deg); }
+      85%      { opacity: 1; transform: translate(224px, 84px) scale(1) rotate(4deg); }
+      100%     { opacity: 0; transform: translate(226px, 96px) scale(.9) rotate(0deg); }
+    }
+
+    /* Cards settling into the basket — a longer cycle than the machine
+       loop so the basket visibly fills, then resets. */
+    .mch-caught rect {
+      fill: var(--surface); stroke: var(--scan); stroke-width: 1.5;
+      opacity: 0;
+      transform-box: fill-box; transform-origin: center bottom;
+      animation: caught 4.8s ease-out infinite;
+      animation-delay: var(--d);
+    }
+    @keyframes caught {
+      0%       { opacity: 0; transform: translateY(-10px) scale(.8); }
+      6%       { opacity: 1; transform: translateY(0) scale(1); }
+      88%      { opacity: 1; transform: translateY(0) scale(1); }
+      100%     { opacity: 0; transform: translateY(0) scale(1); }
+    }
+    .machine-scene.finishing .mch-caught rect { animation: none; opacity: 1; }
+    @media (prefers-reduced-motion: reduce) {
+      .mch-caught rect { animation: none !important; opacity: 1; }
+    }
+
+    .mch-basket-body { fill: var(--primary-light); stroke: var(--border-strong); stroke-width: 2.5; }
+    .mch-basket-rim  { stroke: var(--border-strong); stroke-width: 3.5; stroke-linecap: round; }
+    .mch-basket {
+      transform-box: fill-box; transform-origin: center bottom;
+      animation: basketBump 2.4s ease-out infinite;
+    }
+    @keyframes basketBump {
+      0%, 82%, 100% { transform: scaleY(1); }
+      88%           { transform: scaleY(.94); }
+      94%           { transform: scaleY(1.02); }
+    }
+
+    /* Payoff: on reveal the basket swells and the machine settles. */
+    .machine-scene.finishing .mch-basket { animation: basketWin .5s ease-out both; }
+    .machine-scene.finishing .mch-paper  { animation: none; opacity: 0; }
+    @keyframes basketWin {
+      0%   { transform: scale(1); }
+      45%  { transform: scale(1.16) translateY(-3px); }
+      100% { transform: scale(1); }
+    }
+
     .wait-pct {
-      position: absolute; inset: 0; display: flex; align-items: center;
-      justify-content: center; font-weight: 700; font-size: 1.1rem;
-      color: var(--primary); z-index: 1;
+      display: block; text-align: center;
+      font-weight: 700; font-size: 1.05rem;
+      color: var(--text); letter-spacing: -.02em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Motion-sensitive users get the scene, static. */
+    @media (prefers-reduced-motion: reduce) {
+      .mch-belt, .mch-paper, .mch-body, .mch-scan, .mch-scanline,
+      .mch-led, .mch-gear, .mch-job, .mch-basket { animation: none !important; }
+      .mch-paper, .mch-job { opacity: 1; }
+      .mch-paper { transform: translate(6px, 46px); }
+      .mch-job   { transform: translate(212px, 62px); }
     }
     .wait-title { font-size: 1.15rem; font-weight: 700; margin-bottom: .4rem; }
     .wait-msg {
@@ -401,10 +678,10 @@
     .kw-chip {
       padding: .22rem .75rem;
       background: var(--warning-light);
-      border: 1px solid #f0c08a;
+      border: 1px solid color-mix(in oklab, var(--warning) 35%, transparent);
       border-radius: 999px;
       font-size: .76rem; font-weight: 600;
-      color: #8a5a20;
+      color: var(--warning);
     }
 
     /* Divider */
@@ -435,7 +712,7 @@
       color: var(--text);
       transition: border-color .15s, box-shadow .15s;
     }
-    .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,91,214,.1); background: #fff; }
+    .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(91,91,214,.1); background: var(--surface); }
     @media (max-width: 480px) { .search-row { flex-direction: column; } }
 
     /* ─────── Job Results ─────── */
@@ -460,30 +737,59 @@
     .country-btn:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
     .country-btn.active {
       border-color: var(--primary); background: var(--primary);
-      color: #fff;
+      color: var(--primary-fg);
     }
 
     /* ── Upload preferences (manual level / role / states) ── */
-    .upload-prefs { margin: 1.25rem 0 0; text-align: left; }
+    /* ── First-screen preferences (country / experience / role) ──
+       These are the most important controls on the page, so they get
+       the full treatment: real depth, cursor-tracked hover, and colours
+       that survive the theme flip. */
+    .upload-prefs { margin: 1.5rem 0 0; text-align: left; }
     .pref-label {
       display: block; font-size: .8rem; font-weight: 600; color: var(--text);
-      margin: 1rem 0 .45rem;
+      margin: 1.1rem 0 .5rem; letter-spacing: -.01em;
     }
     .pref-label .opt { font-weight: 400; color: var(--muted); font-size: .74rem; }
-    .pref-pills { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .pref-pills { display: flex; flex-wrap: wrap; gap: .45rem; }
     .pref-pill {
-      padding: .38rem .8rem; border-radius: 999px; font-size: .8rem; font-weight: 500;
+      position: relative; overflow: hidden;
+      padding: .42rem .85rem; border-radius: 999px;
+      font-size: .8rem; font-weight: 500;
       cursor: pointer; border: 1px solid var(--border);
-      background: var(--surface); color: var(--muted); transition: all .12s;
+      background: var(--surface); color: var(--muted);
+      box-shadow: var(--shadow);
+      transition: color .15s ease, border-color .15s ease,
+                  background-color .15s ease, transform .15s ease, box-shadow .15s ease;
     }
-    .pref-pill:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
-    .pref-pill.active { border-color: var(--primary); background: var(--primary); color: #fff; }
+    .pref-pill:hover {
+      border-color: var(--border-strong); color: var(--text);
+      background: var(--surface-2);
+      transform: translateY(-1px); box-shadow: var(--shadow-md);
+    }
+    .pref-pill:active { transform: translateY(0); }
+    .pref-pill:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+    /* --primary-fg, not #fff: in dark --primary is near-white, so a
+       hardcoded white label made the selected pill unreadable. */
+    .pref-pill.active {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: var(--primary-fg);
+      font-weight: 600;
+      box-shadow: inset 0 1px 0 var(--ring), var(--shadow-md);
+    }
     .pref-input {
-      width: 100%; padding: .6rem .85rem; border: 1px solid var(--border);
+      width: 100%; padding: .65rem .9rem; border: 1px solid var(--border);
       border-radius: var(--radius-sm); font-size: .88rem; color: var(--text);
-      background: var(--surface); outline: none; transition: border-color .12s;
+      background: var(--surface); outline: none;
+      box-shadow: var(--shadow);
+      transition: border-color .15s ease, box-shadow .15s ease;
     }
-    .pref-input:focus { border-color: var(--primary); }
+    .pref-input::placeholder { color: var(--muted); opacity: .75; }
+    .pref-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--ring), var(--shadow);
+    }
 
     .filter-row { display: flex; gap: .3rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
     .filter-sep { width: 1px; height: 16px; background: var(--border); margin: 0 .15rem; }
@@ -513,15 +819,15 @@
       overflow: hidden;
     }
     .job-card:hover {
-      border-color: #c7c6ef;
+      border-color: var(--border-strong);
       box-shadow: var(--shadow-md);
     }
-    .job-card.best-match { border-color: #86efac; }
+    .job-card.best-match { border-color: color-mix(in oklab, var(--success) 45%, transparent); }
 
     .best-match-ribbon {
       position: absolute; top: 0; right: 0;
       background: var(--success);
-      color: #fff;
+      color: var(--primary-fg);
       font-size: .6rem; font-weight: 700;
       padding: .2rem .65rem;
       border-radius: 0 var(--radius) 0 var(--radius-sm);
@@ -534,8 +840,8 @@
       padding: .13rem .5rem; border-radius: 999px;
       white-space: nowrap; flex-shrink: 0;
     }
-    .match-high { background: var(--success-light); color: #2a7a56; }
-    .match-mid  { background: var(--warning-light); color: #8a5a20; }
+    .match-high { background: var(--success-light); color: var(--success); }
+    .match-mid  { background: var(--warning-light); color: var(--warning); }
     .match-zero { background: var(--bg); color: var(--muted); }
     .match-bar-track { flex: 1; height: 4px; background: var(--border); border-radius: 999px; overflow: hidden; }
     .match-bar-fill { height: 100%; border-radius: 999px; transition: width .6s ease; }
@@ -543,7 +849,7 @@
     .jc-kw-chips { display: flex; flex-wrap: wrap; gap: .28rem; margin-top: .2rem; }
     .jc-kw-chip {
       padding: .12rem .5rem; border-radius: 999px; font-size: .67rem; font-weight: 600;
-      background: var(--success-light); border: 1px solid #a8d8c2; color: #235c40;
+      background: var(--success-light); border: 1px solid color-mix(in oklab, var(--success) 35%, transparent); color: var(--success);
     }
     .jc-kw-more {
       padding: .12rem .5rem; border-radius: 999px; font-size: .67rem; font-weight: 600;
@@ -556,26 +862,33 @@
       padding: .16rem .55rem; border-radius: 999px; font-size: .65rem; font-weight: 800;
       text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; flex-shrink: 0;
     }
-    .b-linkedin        { background: #dde8fb; color: #2d5ab0; }
-    .b-naukri          { background: #d6f0e4; color: #235c40; }
-    .b-internshala     { background: #fce4f1; color: #8f1a5a; }
-    .b-greenhouse      { background: #d6f0e4; color: #1a5c3a; }
-    .b-lever           { background: #ede9ff; color: #5140a0; }
-    .b-indeed          { background: var(--warning-light); color: #8a5a20; }
-    .b-wellfound       { background: #fce4e4; color: #8f1a2a; }
-    .b-remoteok        { background: #d6f5ec; color: #1a5c45; }
-    .b-weworkremotely  { background: #d8f5e0; color: #1a5c2a; }
-    .b-glassdoor       { background: #d8edf7; color: #1a4f6e; }
-    .b-timesjobs       { background: #fde8d6; color: #7a3a12; }
-    .b-shine           { background: #eae8ff; color: #4a38a0; }
-    .b-foundit         { background: #fce4e4; color: #7a1a22; }
+    /* Source badges: each sets only its hue; the tint is mixed against the
+       current surface/text, so one rule covers both themes automatically. */
+    .jc-badge[class*="b-"] {
+      background: color-mix(in oklab, var(--hue) 14%, var(--surface));
+      color:      color-mix(in oklab, var(--hue) 68%, var(--text));
+      box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 22%, transparent);
+    }
+    .b-linkedin        { --hue: #2d5ab0; }
+    .b-naukri          { --hue: #1f6b4a; }
+    .b-internshala     { --hue: #b02d78; }
+    .b-greenhouse      { --hue: #1a7a4a; }
+    .b-lever           { --hue: #5140a0; }
+    .b-indeed          { --hue: #b06a20; }
+    .b-wellfound       { --hue: #b02d3a; }
+    .b-remoteok        { --hue: #17806a; }
+    .b-weworkremotely  { --hue: #2a8c3a; }
+    .b-glassdoor       { --hue: #1a6e96; }
+    .b-timesjobs       { --hue: #a34d18; }
+    .b-shine           { --hue: #71717a; }
+    .b-foundit         { --hue: #a3323a; }
 
     .delta-badge {
       display: inline-flex; align-items: center; gap: .25rem;
       padding: .2rem .7rem; border-radius: 999px; font-size: .76rem; font-weight: 700; margin-top: .3rem;
     }
-    .delta-up   { background: var(--success-light); color: #2a7a56; }
-    .delta-down { background: var(--danger-light);  color: #8f1a2a; }
+    .delta-up   { background: var(--success-light); color: var(--success); }
+    .delta-down { background: var(--danger-light);  color: var(--danger); }
     .delta-same { background: var(--bg); color: var(--muted); }
 
     .diff-section { margin-top: .5rem; }
@@ -589,7 +902,7 @@
     .india-tag {
       font-size: .66rem; font-weight: 700;
       padding: .1rem .42rem; border-radius: 999px;
-      background: var(--warning-light); color: #8a5a20; flex-shrink: 0;
+      background: var(--warning-light); color: var(--warning); flex-shrink: 0;
     }
 
     /* ── CV Intelligence Panel ── */
@@ -620,11 +933,17 @@
       padding: .3rem .85rem; border-radius: 999px;
       font-size: .76rem; font-weight: 700; white-space: nowrap;
     }
-    .exp-badge.fresher { background: var(--success-light); color: #2a7a56; border: 1px solid #a8d8c2; }
-    .exp-badge.junior  { background: #dde8fb; color: #2d5ab0; border: 1px solid #b3c8f0; }
-    .exp-badge.mid     { background: var(--warning-light); color: #8a5a20; border: 1px solid #f0c08a; }
-    .exp-badge.senior  { background: var(--danger-light); color: #8f2a36; border: 1px solid #f0a8b2; }
-    .exp-badge.lead    { background: #eae8ff; color: #4a38a0; border: 1px solid #c4bef7; }
+    .exp-badge.fresher { --hue: #1f6b4a; }
+    .exp-badge[class*="exp-"], .exp-badge.fresher, .exp-badge.junior,
+    .exp-badge.mid, .exp-badge.senior, .exp-badge.lead {
+      background: color-mix(in oklab, var(--hue, var(--muted)) 14%, var(--surface));
+      color:      color-mix(in oklab, var(--hue, var(--muted)) 68%, var(--text));
+      border: 1px solid color-mix(in oklab, var(--hue, var(--muted)) 30%, transparent);
+    }
+    .exp-badge.junior  { --hue: #2d5ab0; }
+    .exp-badge.mid     { --hue: #b06a20; }
+    .exp-badge.senior  { --hue: #b02d3a; }
+    .exp-badge.lead    { --hue: #5140a0; }
 
     .cv-intel-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;
@@ -672,7 +991,7 @@
       border-radius: var(--radius-sm); padding: .85rem 1rem;
       cursor: pointer; transition: border-color .18s, background .18s, transform .12s;
     }
-    .suggestion-card:hover { border-color: #c4bef7; background: var(--primary-light); transform: translateY(-1px); }
+    .suggestion-card:hover { border-color: var(--border-strong); background: var(--primary-light); transform: translateY(-1px); }
     .suggestion-card.active { border-color: var(--primary); background: var(--primary-light); box-shadow: 0 0 0 3px rgba(124,111,247,.1); }
     .suggestion-card-rank {
       position: absolute; top: .55rem; right: .7rem;
@@ -681,21 +1000,21 @@
     .suggestion-card.active .suggestion-card-rank { color: var(--primary); }
     .suggestion-icon-wrap {
       width: 36px; height: 36px; border-radius: 8px;
-      background: var(--primary-light); border: 1px solid #c4bef7;
+      background: var(--primary-light); border: 1px solid var(--border-strong);
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     .suggestion-icon-wrap svg { width: 18px; height: 18px; color: var(--primary); }
-    .suggestion-card.active .suggestion-icon-wrap { background: #fff; }
+    .suggestion-card.active .suggestion-icon-wrap { background: var(--surface); }
     .suggestion-body { flex: 1; min-width: 0; padding-right: 1.5rem; }
     .suggestion-title { font-size: .88rem; font-weight: 800; margin-bottom: .12rem; color: var(--text); }
     .suggestion-domain { font-size: .71rem; color: var(--muted); margin-bottom: .3rem; font-weight: 600; }
     .suggestion-tags { display: flex; flex-wrap: wrap; gap: .22rem; }
     .suggestion-tag {
       font-size: .62rem; font-weight: 700; padding: .1rem .45rem;
-      border-radius: 999px; background: #fff;
+      border-radius: 999px; background: var(--surface);
       border: 1px solid var(--border); color: var(--muted);
     }
-    .suggestion-card.active .suggestion-tag { border-color: #c4bef7; color: var(--primary-dark); }
+    .suggestion-card.active .suggestion-tag { border-color: var(--border-strong); color: var(--primary-dark); }
 
     .cv-intel-actions {
       display: flex; gap: .75rem; margin-top: 1.25rem;
@@ -704,7 +1023,7 @@
     }
     .intel-search-btn {
       display: inline-flex; align-items: center; gap: .45rem;
-      padding: .62rem 1.35rem; background: var(--primary-grad); color: #fff;
+      padding: .62rem 1.35rem; background: var(--primary-grad); color: var(--primary-fg);
       border: none; border-radius: var(--radius-sm); font-size: .86rem; font-weight: 700;
       cursor: pointer; box-shadow: 0 3px 10px rgba(108,99,255,.3);
       transition: all .18s ease;
@@ -723,7 +1042,7 @@
       outline: none; transition: border-color .15s, box-shadow .15s;
       min-height: 120px; line-height: 1.6;
     }
-    .jd-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(108,99,255,.1); background: #fff; }
+    .jd-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(108,99,255,.1); background: var(--surface); }
 
     /* legacy compat */
     .rec-banner { display: none !important; }
@@ -738,7 +1057,7 @@
     .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
     .dot-green  { background: var(--success); }
     .dot-yellow { background: var(--warning); animation: pulse 1.2s ease infinite; }
-    .dot-gray   { background: #b8b6cc; }
+    .dot-gray   { background: var(--border-strong); }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
     .status-bar strong { color: var(--text); }
     .refresh-btn {
@@ -758,7 +1077,7 @@
     .jc-footer { margin-top: auto; padding-top: .75rem; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
     .apply-btn {
       flex: 1; text-align: center; padding: .55rem;
-      background: var(--primary); color: #fff; border-radius: var(--radius-sm);
+      background: var(--primary); color: var(--primary-fg); border-radius: var(--radius-sm);
       font-size: .82rem; font-weight: 600; text-decoration: none;
       transition: opacity .12s;
     }
@@ -783,7 +1102,7 @@
     .toast {
       position: fixed; bottom: 1.75rem; right: 1.75rem; max-width: 320px;
       padding: .85rem 1.2rem; border-radius: var(--radius-sm);
-      font-size: .875rem; font-weight: 500; color: #fff;
+      font-size: .875rem; font-weight: 500; color: var(--primary-fg);
       box-shadow: var(--shadow-lg); transform: translateY(120%); opacity: 0;
       transition: transform .3s ease, opacity .3s ease; z-index: 999; pointer-events: none;
     }
@@ -799,6 +1118,19 @@
       font-size: .75rem; color: var(--muted); text-align: center; margin-top: .75rem;
     }
   </style>
+  <script>
+    /* Runs before first paint: resolves the theme so dark-mode users never
+       see a white flash. Kept inline and tiny — do not move to a file. */
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
 </head>
 <body>
 
@@ -814,6 +1146,18 @@
   </div>
   <div class="header-right">
     <span class="header-tagline">ATS scoring · Domain intelligence · Job search</span>
+    <button id="theme-toggle" class="theme-toggle" type="button"
+            aria-label="Switch colour theme" title="Switch colour theme">
+      <svg class="icon-sun" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+      </svg>
+      <svg class="icon-moon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+        <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+      </svg>
+    </button>
     <div class="online-wrap" id="online-wrap" title="People using the site right now">
       <span class="online-dot"></span>
       <span><strong id="online-count">1</strong> online now</span>
@@ -892,10 +1236,75 @@
       </div>
 
       <div class="wait-section" id="wait-section">
-        <div class="wait-ring" id="wait-ring">
-          <div class="wait-ring-spin"></div>
+        <!-- ── The CV machine ──────────────────────────────────────────
+             A sheet feeds in from the left, the scanner sweeps it, and
+             job cards arc out into the basket. Pure CSS keyframes on a
+             shared 2.4s loop; JS only adds .finishing for the payoff. -->
+        <div class="machine-scene" id="machine-scene" aria-hidden="true">
+          <svg viewBox="0 0 280 150" role="img">
+            <!-- conveyor -->
+            <line class="mch-belt" x1="8" y1="112" x2="272" y2="112"/>
+
+            <!-- incoming CV sheets -->
+            <g class="mch-papers">
+              <g class="mch-paper" style="--d:0s">
+                <rect class="mch-sheet" x="0" y="0" width="34" height="44" rx="4"/>
+                <line class="mch-line" x1="6" y1="10" x2="24" y2="10"/>
+                <line class="mch-line" x1="6" y1="18" x2="28" y2="18"/>
+                <line class="mch-line" x1="6" y1="26" x2="20" y2="26"/>
+                <line class="mch-line" x1="6" y1="34" x2="26" y2="34"/>
+              </g>
+              <g class="mch-paper" style="--d:.8s">
+                <rect class="mch-sheet" x="0" y="0" width="34" height="44" rx="4"/>
+                <line class="mch-line" x1="6" y1="10" x2="24" y2="10"/>
+                <line class="mch-line" x1="6" y1="18" x2="28" y2="18"/>
+                <line class="mch-line" x1="6" y1="26" x2="20" y2="26"/>
+              </g>
+              <g class="mch-paper" style="--d:1.6s">
+                <rect class="mch-sheet" x="0" y="0" width="34" height="44" rx="4"/>
+                <line class="mch-line" x1="6" y1="10" x2="24" y2="10"/>
+                <line class="mch-line" x1="6" y1="18" x2="28" y2="18"/>
+                <line class="mch-line" x1="6" y1="26" x2="26" y2="26"/>
+              </g>
+            </g>
+
+            <!-- machine -->
+            <g class="mch-body">
+              <rect class="mch-shell" x="96" y="30" width="88" height="82" rx="12"/>
+              <rect class="mch-window" x="106" y="44" width="68" height="38" rx="6"/>
+              <rect class="mch-scan" x="106" y="44" width="68" height="38" rx="6"/>
+              <line class="mch-scanline" x1="106" y1="44" x2="174" y2="44"/>
+              <circle class="mch-led l1" cx="116" cy="98" r="4"/>
+              <circle class="mch-led l2" cx="132" cy="98" r="4"/>
+              <circle class="mch-led l3" cx="148" cy="98" r="4"/>
+              <g class="mch-gear">
+                <circle cx="164" cy="98" r="7"/>
+                <line x1="164" y1="88" x2="164" y2="108"/>
+                <line x1="154" y1="98" x2="174" y2="98"/>
+              </g>
+            </g>
+
+            <!-- ejected job cards -->
+            <g class="mch-outs">
+              <g class="mch-job" style="--d:1.05s"><rect x="0" y="0" width="26" height="20" rx="3"/><line x1="5" y1="7" x2="17" y2="7"/><line x1="5" y1="13" x2="14" y2="13"/></g>
+              <g class="mch-job" style="--d:1.85s"><rect x="0" y="0" width="26" height="20" rx="3"/><line x1="5" y1="7" x2="19" y2="7"/><line x1="5" y1="13" x2="13" y2="13"/></g>
+              <g class="mch-job" style="--d:2.65s"><rect x="0" y="0" width="26" height="20" rx="3"/><line x1="5" y1="7" x2="15" y2="7"/><line x1="5" y1="13" x2="18" y2="13"/></g>
+            </g>
+
+            <!-- basket, with cards visibly collecting in it -->
+            <g class="mch-basket">
+              <g class="mch-caught">
+                <rect style="--d:1.75s" x="212" y="84" width="18" height="13" rx="2" transform="rotate(-12 221 90)"/>
+                <rect style="--d:2.55s" x="228" y="82" width="18" height="13" rx="2" transform="rotate(7 237 88)"/>
+                <rect style="--d:3.35s" x="240" y="85" width="18" height="13" rx="2" transform="rotate(-5 249 91)"/>
+              </g>
+              <path class="mch-basket-body" d="M206 96 h56 l-7 26 a4 4 0 0 1 -4 3 h-34 a4 4 0 0 1 -4 -3 z"/>
+              <line class="mch-basket-rim" x1="202" y1="96" x2="266" y2="96"/>
+            </g>
+          </svg>
           <span class="wait-pct" id="wait-pct">0%</span>
         </div>
+        <div class="wait-ring" id="wait-ring" hidden></div>
         <h3 class="wait-title" id="wait-title">Analyzing your CV…</h3>
         <p class="wait-msg" id="wait-msg">Analyzing your CV…</p>
         <ul class="wait-steps" id="wait-steps">
@@ -923,7 +1332,7 @@
       <div class="score-card">
         <div class="gauge-wrap">
           <svg width="136" height="136" viewBox="0 0 136 136">
-            <circle cx="68" cy="68" r="52" fill="none" stroke="#e2e8f0" stroke-width="12"/>
+            <circle cx="68" cy="68" r="52" fill="none" stroke="var(--border)" stroke-width="12"/>
             <circle id="gauge-arc" cx="68" cy="68" r="52" fill="none"
               stroke="var(--primary)" stroke-width="12" stroke-linecap="round"
               stroke-dasharray="326.7" stroke-dashoffset="326.7"
@@ -1122,7 +1531,7 @@
         <h2>Job Listings</h2>
         <div style="display:flex;gap:.5rem;align-items:center">
           <span class="count-pill" id="count-pill">0 results</span>
-          <span class="count-pill" id="saved-pill" style="display:none;background:#e0fce8;color:#2a7a56;cursor:pointer" onclick="toggleSaved()">0 saved</span>
+          <span class="count-pill" id="saved-pill" style="display:none;background:var(--success-light);color:var(--success);cursor:pointer" onclick="toggleSaved()">0 saved</span>
         </div>
       </div>
       <div class="filter-row" id="filter-row">
@@ -1627,7 +2036,7 @@ $('jd-match-btn').addEventListener('click', async () => {
     Object.assign(badge.style, { background:bg, color:tc, display:'inline-block' });
 
     $('jd-matched-chips').innerHTML = (data.matched||[]).map(k =>
-      `<span class="kw-chip" style="background:var(--success-light);border-color:#a8d8c2;color:#235c40">${esc(k)}</span>`).join('') || '<span style="color:var(--muted);font-size:.82rem">None found</span>';
+      `<span class="kw-chip" style="background:var(--success-light);border-color:color-mix(in oklab, var(--success) 35%, transparent);color:#235c40">${esc(k)}</span>`).join('') || '<span style="color:var(--muted);font-size:.82rem">None found</span>';
 
     $('jd-missing-chips').innerHTML = (data.missing||[]).map(k =>
       `<span class="kw-chip" style="background:var(--danger-light);border-color:#f0a8b2;color:#8f2a36">${esc(k)}</span>`).join('') || '<span style="color:var(--muted);font-size:.82rem">Great — no gaps!</span>';
@@ -1888,6 +2297,94 @@ recSearchBtn.addEventListener('click', () => {
     jobSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 });
+
+/* ── Pointer effects ───────────────────────────────────────────────
+   Spotlight + per-card light. Fine pointers only (no touch), and off
+   entirely under prefers-reduced-motion. All writes are batched into
+   one rAF so mousemove never thrashes layout.                       */
+(function () {
+  const fine = window.matchMedia('(pointer: fine)').matches;
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!fine || calm) return;
+
+  document.body.classList.add('pointer-fine');
+
+  const glow = document.createElement('div');
+  glow.className = 'cursor-glow';
+  document.body.appendChild(glow);
+
+  let x = 0, y = 0, queued = false, hovered = null;
+
+  function paint() {
+    queued = false;
+    glow.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    if (hovered) {
+      const r = hovered.getBoundingClientRect();
+      hovered.style.setProperty('--mx', (x - r.left) + 'px');
+      hovered.style.setProperty('--my', (y - r.top) + 'px');
+    }
+  }
+
+  window.addEventListener('mousemove', (e) => {
+    x = e.clientX; y = e.clientY;
+    // target is not always an Element (window/document) — guard or the
+    // whole handler throws and the glow silently freezes.
+    hovered = e.target instanceof Element
+      ? e.target.closest('.job-card, .drop-zone')
+      : null;
+    if (!queued) { queued = true; requestAnimationFrame(paint); }
+  }, { passive: true });
+
+  document.addEventListener('mouseleave', () => { glow.style.opacity = '0'; });
+  document.addEventListener('mouseenter', () => { glow.style.opacity = ''; });
+})();
+
+/* ── Click ripple ──────────────────────────────────────────────────
+   Delegated so it covers job cards and buttons rendered later.      */
+document.addEventListener('click', (e) => {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const btn = e.target.closest('.btn, .theme-toggle, .apply-btn, .pref-pill');
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+  const size = Math.max(r.width, r.height);
+  const ink = document.createElement('span');
+  ink.className = 'ripple';
+  ink.style.width = ink.style.height = size + 'px';
+  ink.style.left = (e.clientX - r.left - size / 2) + 'px';
+  ink.style.top  = (e.clientY - r.top  - size / 2) + 'px';
+  btn.appendChild(ink);
+  // animationend alone proved unreliable here (it can be missed entirely),
+  // which leaked a node per click — the timer is the guaranteed cleanup.
+  const done = () => ink.remove();
+  ink.addEventListener('animationend', done);
+  setTimeout(done, 700);
+});
+
+/* ── Theme toggle ──────────────────────────────────────────────────
+   The initial theme is already resolved by the inline <head> script;
+   this only handles user flips and the OS-preference follow.        */
+const themeToggle = document.getElementById('theme-toggle');
+
+function applyTheme(theme, persist) {
+  document.documentElement.setAttribute('data-theme', theme);
+  if (persist) { try { localStorage.setItem('theme', theme); } catch (e) {} }
+}
+
+themeToggle.addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next, true);
+});
+
+/* Follow the OS only while the user hasn't made an explicit choice. */
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+  let chosen = null;
+  try { chosen = localStorage.getItem('theme'); } catch (err) {}
+  if (!chosen) applyTheme(e.matches ? 'dark' : 'light', false);
+});
+
+/* Enable colour transitions only after first paint, so loading the page
+   in dark mode doesn't animate from light. */
+requestAnimationFrame(() => document.body.classList.add('theme-ready'));
 
 /* ── Boot ── */
 pollStatus();          // hides the old admin status bar
