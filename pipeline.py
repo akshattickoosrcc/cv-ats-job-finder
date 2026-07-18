@@ -72,7 +72,8 @@ def _scrape_and_score(field: str, cv_keywords: list, country: str,
         # Seniority-aware rank score: each level of gap from the candidate costs
         # 18 points, so aligned roles rise to the top without hiding everything.
         pen = _app.level_penalty(user_level, j.get("title", "")) if user_level else 0
-        j["_rank"] = j["match_pct"] - 18 * pen
+        # Source tier: career pages (Greenhouse/Lever) rise; Internshala sinks.
+        j["_rank"] = j["match_pct"] - 18 * pen + _app.source_boost(job.get("source"))
         jobs.append(j)
     jobs.sort(key=lambda j: (-j["_rank"], -j["match_score"]))
     for j in jobs:

@@ -967,6 +967,26 @@ def level_penalty(user_level: str, job_title: str) -> int:
     return abs(_SENIORITY.index(user_level) - _SENIORITY.index(jl))
 
 
+# ─── Source ranking tiers ────────────────────────────────────────────
+# Applied on top of match-% so ranking reflects source quality, not just
+# keyword volume. Career pages (direct company ATS) are promoted to the
+# top; Internshala is demoted so it drops below everything else while
+# still remaining in results and its own filter tab. Values are in
+# match-% points and are env-tunable so they can be adjusted without a
+# code change.
+SOURCE_RANK_BOOST = {
+    "greenhouse":  int(os.environ.get("BOOST_GREENHOUSE", "25")),
+    "lever":       int(os.environ.get("BOOST_LEVER", "25")),
+    "internshala": int(os.environ.get("BOOST_INTERNSHALA", "-40")),
+}
+
+
+def source_boost(source: str) -> int:
+    """Rank adjustment (match-% points) for a job's source. Career pages
+    float up; Internshala sinks but is never dropped."""
+    return SOURCE_RANK_BOOST.get((source or "").strip().lower(), 0)
+
+
 def _dedupe_jobs(jobs):
     """Drop the same posting listed on multiple platforms (normalized
     title + company). Keeps the first (highest-ranked) occurrence."""
@@ -1197,8 +1217,13 @@ def search_jobs_route():
         j["country"] = sc.detect_country(j.get("location", ""))
         j["matched_keywords"], j["match_pct"] = compute_match(j, cv_keywords, field, country)
         j["match_score"] = len(j["matched_keywords"])
+        # Same source tiering as the analysis recommendations: career pages
+        # first, Internshala last, so both paths order results identically.
+        j["_rank"] = j["match_pct"] + source_boost(j.get("source"))
         jobs.append(j)
-    jobs.sort(key=lambda j: (-j["match_pct"], -j["match_score"]))
+    jobs.sort(key=lambda j: (-j["_rank"], -j["match_pct"], -j["match_score"]))
+    for j in jobs:
+        j.pop("_rank", None)
 
     return jsonify({
         "jobs":    jobs[:300],
